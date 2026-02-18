@@ -104,37 +104,13 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`
-  ╔══════════════════════════════════════════════╗
-  ║   🚀 Server running on port ${PORT}           ║
-  ║   📝 Environment: ${process.env.NODE_ENV || 'development'}              ║
-  ║   🔗 API: http://localhost:${PORT}            ║
-  ╚══════════════════════════════════════════════╝
-  `);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
+  }
 
-  startEmailQueueWorker()
-    .then(() => {
-      console.log('📧 Email queue worker started');
-    })
-    .catch((error) => {
-      console.error('❌ Failed to start email queue worker:', error.message);
-    });
-
-  startInventorySyncWorker()
-    .then(() => {
-      console.log('📦 ERP inventory sync worker started');
-    })
-    .catch((error) => {
-      console.error('❌ Failed to start ERP inventory sync worker:', error.message);
-    });
-
-  startLeadEmailIngestionWorker()
-    .then(() => {
-      console.log('📨 Lead email ingestion worker started');
-    })
-    .catch((error) => {
-      console.error('❌ Failed to start lead email ingestion worker:', error.message);
-    });
+  startEmailQueueWorker().catch((err) => console.error('Email queue worker failed:', err.message));
+  startInventorySyncWorker().catch((err) => console.error('ERP inventory sync worker failed:', err.message));
+  startLeadEmailIngestionWorker().catch((err) => console.error('Lead email ingestion worker failed:', err.message));
 });
 
 module.exports = app;

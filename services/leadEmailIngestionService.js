@@ -404,7 +404,9 @@ const runLeadEmailSync = async () => {
             }
         }
 
-        console.log(`📨 Lead email sync complete: created=${created}, deduped=${deduped}, skipped=${skipped}`);
+        if (process.env.NODE_ENV !== 'production') {
+            console.log(`Lead email sync: created=${created}, deduped=${deduped}, skipped=${skipped}`);
+        }
         lastSuccessfulSyncAt = new Date();
     } finally {
         try {

@@ -242,7 +242,9 @@ const syncInventoryFromErp = async () => {
         else updated++;
     }
 
-    console.log(`🔄 ERP inventory sync complete: inserted=${inserted}, updated=${updated}, skipped=${skipped}`);
+    if (process.env.NODE_ENV !== 'production') {
+        console.log(`ERP inventory sync: inserted=${inserted}, updated=${updated}, skipped=${skipped}`);
+    }
 };
 
 const ensureInventoryColumns = async () => {
