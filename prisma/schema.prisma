@@ -1,0 +1,264 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  userId          Int              @id @default(autoincrement()) @map("user_id")
+  name            String
+  email           String
+  mobileNo        String?          @map("mobile_no")
+  role            String
+  teamId          Int?             @map("team_id")
+  active          Boolean?         @default(true)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @default(now()) @map("updated_at")
+  leadsAssigned   Lead[]           @relation("LeadAssigned")
+  leadsAssignedBy Lead[]           @relation("LeadAssignedBy")
+  leadActivities  LeadActivity[]
+  leadAssignTo    LeadAssignment[] @relation("LeadAssignmentTo")
+  leadAssignBy    LeadAssignment[] @relation("LeadAssignmentBy")
+  leadOrders      LeadOrder[]      @relation("LeadOrderBy")
+
+  @@map("users")
+}
+
+model Lead {
+  leadId              Int                  @id @default(autoincrement()) @map("lead_id")
+  name                String
+  brand               String?
+  companyName         String?              @map("company_name")
+  email               String?
+  phone               String?
+  city                String?
+  source              String?
+  status              String               @default("Pending")
+  assignedUserId      Int?                 @map("assigned_user_id")
+  assignedById        Int?                 @map("assigned_by")
+  assignedAt          DateTime?            @map("assigned_at")
+  followUpDate        DateTime?            @map("follow_up_date")
+  isDuplicate         Boolean              @default(false) @map("is_duplicate")
+  duplicateOf         Int?                 @map("duplicate_of")
+  rejectionReason     String?              @map("rejection_reason")
+  researchStatus      String               @default("pending") @map("research_status")
+  researchRequestedAt DateTime?            @map("research_requested_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @default(now()) @map("updated_at")
+  assignedUser        User?                @relation("LeadAssigned", fields: [assignedUserId], references: [userId])
+  assignedBy          User?                @relation("LeadAssignedBy", fields: [assignedById], references: [userId])
+  duplicateLead       Lead?                @relation("LeadDuplicate", fields: [duplicateOf], references: [leadId])
+  duplicates          Lead[]               @relation("LeadDuplicate")
+  activities          LeadActivity[]
+  assignments         LeadAssignment[]
+  research            LeadCompanyResearch?
+  addresses           LeadAddress[]
+  orders              LeadOrder[]
+
+  @@map("leads")
+}
+
+model LeadActivity {
+  activityId Int      @id @default(autoincrement()) @map("activity_id")
+  leadId     Int      @map("lead_id")
+  userId     Int?     @map("user_id")
+  action     String?
+  statusFrom String?  @map("status_from")
+  statusTo   String?  @map("status_to")
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  lead       Lead     @relation(fields: [leadId], references: [leadId])
+  user       User?    @relation(fields: [userId], references: [userId])
+
+  @@map("lead_activities")
+}
+
+model LeadAssignment {
+  assignmentId   Int      @id @default(autoincrement()) @map("assignment_id")
+  leadId         Int      @map("lead_id")
+  assignedTo     Int?     @map("assigned_to")
+  assignedBy     Int?     @map("assigned_by")
+  assignedAt     DateTime @default(now()) @map("assigned_at")
+  batchId        String?  @map("batch_id") @db.Uuid
+  lead           Lead     @relation(fields: [leadId], references: [leadId])
+  assignedToUser User?    @relation("LeadAssignmentTo", fields: [assignedTo], references: [userId])
+  assignedByUser User?    @relation("LeadAssignmentBy", fields: [assignedBy], references: [userId])
+
+  @@map("lead_assignments")
+}
+
+model LeadCompanyResearch {
+  researchId   Int      @id @default(autoincrement()) @map("research_id")
+  leadId       Int      @unique @map("lead_id")
+  industry     String?
+  pincode      String?
+  cin          String?
+  entityType   String?  @map("entity_type")
+  roc          String?
+  revenue      String?
+  employees    String?
+  gst          String?
+  address      String?
+  city         String?
+  state        String?
+  rawResponse  Json?    @map("raw_response")
+  researchedAt DateTime @default(now()) @map("researched_at")
+  lead         Lead     @relation(fields: [leadId], references: [leadId])
+
+  @@map("lead_company_research")
+}
+
+model LeadOrder {
+  leadOrderId   Int      @id @default(autoincrement()) @map("lead_order_id")
+  leadId        Int      @map("lead_id")
+  orderStatus   String   @default("New") @map("order_status")
+  amount        Decimal  @default(0) @db.Decimal(10, 2)
+  details       Json?
+  createdBy     Int?     @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  lead          Lead     @relation(fields: [leadId], references: [leadId])
+  createdByUser User?    @relation("LeadOrderBy", fields: [createdBy], references: [userId])
+
+  @@map("lead_orders")
+}
+
+model Customer {
+  customerId      Int               @id @default(autoincrement()) @map("customer_id")
+  name            String
+  companyName     String?           @map("company_name")
+  sourceLeadId    Int?              @unique @map("source_lead_id")
+  email           String?
+  phone           String?
+  gstNo           String?           @map("gst_no")
+  type            String?           @default("New")
+  details         Json?
+  address         String?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @default(now()) @map("updated_at")
+  orders          Order[]
+  customerAddress CustomerAddress[]
+
+  @@map("customers")
+}
+
+model LeadAddress {
+  addressId     Int      @id @default(autoincrement()) @map("address_id")
+  leadId        Int      @map("lead_id")
+  concernPerson String?  @map("concern_person")
+  mobileNo      String?  @map("mobile_no")
+  address       String
+  pincode       String?
+  createdBy     Int?     @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  lead          Lead     @relation(fields: [leadId], references: [leadId], onDelete: Cascade)
+
+  @@map("lead_addresses")
+}
+
+model CustomerAddress {
+  customerAddressId   Int      @id @default(autoincrement()) @map("customer_address_id")
+  customerId          Int      @map("customer_id")
+  concernPerson       String?  @map("concern_person")
+  mobileNo            String?  @map("mobile_no")
+  address             String
+  pincode             String?
+  isHeadOffice        Boolean  @default(false) @map("is_head_office")
+  sourceLeadAddressId Int?     @unique @map("source_lead_address_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @default(now()) @map("updated_at")
+  customer            Customer @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+
+  @@map("customer_addresses")
+}
+
+model Order {
+  orderId             Int         @id @default(autoincrement()) @map("order_id")
+  customerId          Int         @map("customer_id")
+  leadType            String?     @map("lead_type")
+  orderType           String?     @default("Sales") @map("order_type")
+  status              String?     @default("New Lead")
+  ownerUserId         Int?        @map("owner_user_id")
+  lockinPeriodDays    Int?        @default(0) @map("lockin_period_days")
+  securityAmount      Decimal?    @default(0) @map("security_amount") @db.Decimal(10, 2)
+  estimateId          String?     @map("estimate_id")
+  isWfh               Boolean?    @default(false) @map("is_wfh")
+  shippingCharge      Decimal?    @default(0) @map("shipping_charge") @db.Decimal(10, 2)
+  shippingGstAmount   Decimal?    @default(0) @map("shipping_gst_amount") @db.Decimal(10, 2)
+  subtotalAmount      Decimal?    @default(0) @map("subtotal_amount") @db.Decimal(12, 2)
+  itemsGstAmount      Decimal?    @default(0) @map("items_gst_amount") @db.Decimal(12, 2)
+  grandTotalAmount    Decimal?    @default(0) @map("grand_total_amount") @db.Decimal(12, 2)
+  invoiceNumber       String?     @map("invoice_number")
+  invoiceGeneratedAt  DateTime?   @map("invoice_generated_at")
+  ewayBillNumber      String?     @map("eway_bill_number")
+  ewayBillGeneratedAt DateTime?   @map("eway_bill_generated_at")
+  deliveryDate        DateTime?   @map("delivery_date") @db.Date
+  shippingAddress     String?     @map("shipping_address")
+  dispatchDate        DateTime?   @map("dispatch_date") @db.Date
+  trackerId           String?     @map("tracker_id")
+  courierPartner      String?     @map("courier_partner")
+  dispatchedAt        DateTime?   @map("dispatched_at")
+  estimatedDelivery   DateTime?   @map("estimated_delivery") @db.Date
+  cancelledAt         DateTime?   @map("cancelled_at")
+  cancelledBy         Int?        @map("cancelled_by")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @default(now()) @map("updated_at")
+  customer            Customer    @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  items               OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  itemId                Int                  @id @default(autoincrement()) @map("item_id")
+  orderId               Int                  @map("order_id")
+  brand                 String?
+  processor             String?
+  ram                   String?
+  storage               String?
+  quantity              Int?                 @default(1)
+  preferredModel        String?              @map("preferred_model")
+  status                String?              @default("New")
+  inventoryId           Int?                 @map("inventory_id")
+  unitPrice             Decimal?             @default(0) @map("unit_price") @db.Decimal(10, 2)
+  gstPercent            Decimal?             @default(18) @map("gst_percent") @db.Decimal(5, 2)
+  gstAmount             Decimal?             @default(0) @map("gst_amount") @db.Decimal(10, 2)
+  totalWithGst          Decimal?             @default(0) @map("total_with_gst") @db.Decimal(10, 2)
+  isWfh                 Boolean?             @default(false) @map("is_wfh")
+  shippingCharge        Decimal?             @default(0) @map("shipping_charge") @db.Decimal(10, 2)
+  deliveryMode          String?              @default("Office") @map("delivery_mode")
+  customerAddressId     Int?                 @map("customer_address_id")
+  deliveryContactName   String?              @map("delivery_contact_name")
+  deliveryContactPhone  String?              @map("delivery_contact_phone")
+  deliveryAddress       String?              @map("delivery_address")
+  deliveryPincode       String?              @map("delivery_pincode")
+  estimateId            String?              @map("estimate_id")
+  destinationPincode    String?              @map("destination_pincode")
+  trackingStatus        String?              @default("Not Dispatched") @map("tracking_status")
+  itemTrackerId         String?              @map("item_tracker_id")
+  itemCourierPartner    String?              @map("item_courier_partner")
+  itemDispatchDate      DateTime?            @map("item_dispatch_date") @db.Date
+  itemEstimatedDelivery DateTime?            @map("item_estimated_delivery") @db.Date
+  deliveredAt           DateTime?            @map("delivered_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  order                 Order                @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  procurementRequests   ProcurementRequest[]
+
+  @@map("order_items")
+}
+
+model ProcurementRequest {
+  requestId     Int       @id @default(autoincrement()) @map("request_id")
+  orderItemId   Int       @map("order_item_id")
+  status        String?   @default("New")
+  vendor        String?
+  estimatedCost Decimal?  @map("estimated_cost") @db.Decimal(10, 2)
+  expectedDate  DateTime? @map("expected_date") @db.Date
+  createdAt     DateTime? @default(now()) @map("created_at")
+  updatedAt     DateTime? @default(now()) @map("updated_at")
+  orderItem     OrderItem @relation(fields: [orderItemId], references: [itemId], onDelete: Cascade)
+
+  @@map("procurement_requests")
+}
