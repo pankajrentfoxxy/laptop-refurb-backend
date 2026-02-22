@@ -334,6 +334,28 @@ exports.getLeadById = async (req, res) => {
     );
     lead.addresses = addressRes.rows;
 
+    const remarksRes = await pool.query(
+      `SELECT r.remark_id, r.lead_id, r.user_id, r.note, r.created_at, u.name as user_name
+       FROM lead_remarks r
+       LEFT JOIN users u ON r.user_id = u.user_id
+       WHERE r.lead_id = $1
+       ORDER BY r.created_at DESC`,
+      [lead.leadId]
+    );
+    lead.remarks = remarksRes.rows.map((row) => ({
+      remarkId: row.remark_id,
+      leadId: row.lead_id,
+      userId: row.user_id,
+      note: row.note,
+      createdAt: row.created_at,
+      userName: row.user_name
+    }));
+
+    // Exclude email_reingested from activities (only show post-ingestion activity)
+    lead.activities = (lead.activities || []).filter(
+      (a) => a.action !== 'email_reingested'
+    );
+
     res.json({ success: true, lead });
   } catch (error) {
     console.error('Get lead error:', error);
@@ -933,6 +955,58 @@ exports.deleteLeadAddress = async (req, res) => {
   } catch (error) {
     console.error('Delete lead address error:', error);
     res.status(500).json({ success: false, message: 'Server error deleting address' });
+  }
+};
+
+exports.addLeadRemark = async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body || {};
+  if (!note || !String(note).trim()) {
+    return res.status(400).json({ success: false, message: 'Remark note is required' });
+  }
+  try {
+    const lead = await prisma.lead.findUnique({ where: { leadId: parseInt(id, 10) } });
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!canEditLead(req.user, lead)) return res.status(403).json({ success: false, message: 'Access denied' });
+    const inserted = await pool.query(
+      `INSERT INTO lead_remarks (lead_id, user_id, note, created_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       RETURNING remark_id, lead_id, user_id, note, created_at`,
+      [id, req.user.user_id, String(note).trim()]
+    );
+    const row = inserted.rows[0];
+    res.status(201).json({
+      success: true,
+      remark: {
+        remarkId: row.remark_id,
+        leadId: row.lead_id,
+        userId: row.user_id,
+        note: row.note,
+        createdAt: row.created_at,
+        userName: req.user.name
+      }
+    });
+  } catch (error) {
+    console.error('Add lead remark error:', error);
+    res.status(500).json({ success: false, message: 'Server error adding remark' });
+  }
+};
+
+exports.deleteLeadRemark = async (req, res) => {
+  const { id, remark_id } = req.params;
+  try {
+    const lead = await prisma.lead.findUnique({ where: { leadId: parseInt(id, 10) } });
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!canEditLead(req.user, lead)) return res.status(403).json({ success: false, message: 'Access denied' });
+    const result = await pool.query(
+      `DELETE FROM lead_remarks WHERE lead_id = $1 AND remark_id = $2`,
+      [id, remark_id]
+    );
+    if (!result.rowCount) return res.status(404).json({ success: false, message: 'Remark not found' });
+    res.json({ success: true, message: 'Remark deleted' });
+  } catch (error) {
+    console.error('Delete lead remark error:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting remark' });
   }
 };
 

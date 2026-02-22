@@ -13,6 +13,7 @@ const {
     uploadCustomersCsv,
     createOrder,
     getOrders,
+    getOrderStats,
     getOrderDetails,
     dispatchOrder,
     sendToQC,
@@ -127,6 +128,7 @@ router.put('/customers/:id/addresses/:addr_id', authMiddleware, requireAddressAc
 router.post('/customers/:id/addresses', authMiddleware, requireAddressAccess, addCustomerAddress);
 router.post('/orders', authMiddleware, requireSalesAccess, createOrder);
 router.get('/orders', authMiddleware, getOrders); // All logged-in users can fetch orders (filtered by role)
+router.get('/orders/stats', authMiddleware, getOrderStats);
 router.get('/orders/:id', authMiddleware, getOrderDetails);
 router.put('/orders/:id/cancel', authMiddleware, requireSalesAccess, cancelOrder);
 router.put('/orders/:id/dispatch', authMiddleware, requireDispatchAccess, dispatchOrder);

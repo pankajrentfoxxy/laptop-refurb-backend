@@ -41,6 +41,8 @@ router.put('/:id/research', checkRole('admin', 'manager', 'sales'), leadControll
 router.get('/:id/addresses', checkRole('admin', 'manager', 'sales'), leadController.getLeadAddresses);
 router.post('/:id/addresses', checkRole('admin', 'manager', 'sales'), leadController.addLeadAddress);
 router.delete('/:id/addresses/:address_id', checkRole('admin', 'manager', 'sales'), leadController.deleteLeadAddress);
+router.post('/:id/remarks', checkRole('admin', 'manager', 'sales'), leadController.addLeadRemark);
+router.delete('/:id/remarks/:remark_id', checkRole('admin', 'manager', 'sales'), leadController.deleteLeadRemark);
 router.get('/:id/customer-profile', checkRole('admin', 'manager', 'sales'), leadController.getLeadCustomerProfile);
 
 router.put('/:id/status', checkRole('admin', 'manager', 'sales'), leadController.updateLeadStatus);

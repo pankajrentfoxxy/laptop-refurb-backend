@@ -244,11 +244,6 @@ const insertLeadFromEmail = async ({ parsedFields, subject, fromAddress, sentAt 
 
     const existingLeadId = await findExistingLeadId({ email, phone });
     if (existingLeadId) {
-        await pool.query(
-            `INSERT INTO lead_activities (lead_id, user_id, action, status_from, status_to, notes, created_at)
-             VALUES ($1, NULL, 'email_reingested', NULL, NULL, $2, CURRENT_TIMESTAMP)`,
-            [existingLeadId, safeNotes]
-        );
         return existingLeadId;
     }
 

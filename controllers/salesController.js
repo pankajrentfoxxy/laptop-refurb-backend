@@ -424,7 +424,17 @@ exports.getCustomerById = async (req, res) => {
 
 exports.getCustomers = async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM customers ORDER BY created_at DESC');
+        const { search } = req.query;
+        let result;
+        if (search && String(search).trim()) {
+            const term = `%${String(search).trim()}%`;
+            result = await pool.query(
+                `SELECT * FROM customers WHERE name ILIKE $1 OR company_name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1 OR gst_no ILIKE $1 ORDER BY created_at DESC`,
+                [term]
+            );
+        } else {
+            result = await pool.query('SELECT * FROM customers ORDER BY created_at DESC');
+        }
         const addrRes = await pool.query(
             `SELECT customer_address_id, customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type
              FROM customer_addresses ORDER BY is_head_office DESC, customer_address_id ASC`
@@ -551,8 +561,12 @@ exports.uploadCustomersCsv = async (req, res) => {
     }
 
     let imported = 0;
-    let skipped = 0;
+    let addressesAdded = 0;
+    let skippedNoKey = 0;
+    let skippedDuplicate = 0;
+    let addressesAddedToExisting = 0;
     let failed = 0;
+    const addToExisting = req.body?.add_to_existing === true || req.query?.add_to_existing === 'true';
 
     const pick = (row, ...keys) => {
         for (const k of keys) {
@@ -560,6 +574,11 @@ exports.uploadCustomersCsv = async (req, res) => {
             if (v !== undefined && String(v).trim()) return String(v).trim();
         }
         return null;
+    };
+
+    // Use name, or company_name, or email/phone as fallback for display name
+    const getDisplayName = (row) => {
+        return pick(row, 'name', 'Name') || pick(row, 'company_name', 'company name', 'Company') || pick(row, 'email', 'Email') || pick(row, 'phone', 'Phone') || 'Unknown';
     };
 
     // Group rows by customer key (email > phone > name+company). Same customer in multiple rows = multiple addresses.
@@ -570,17 +589,17 @@ exports.uploadCustomersCsv = async (req, res) => {
         const company = pick(row, 'company_name', 'company name', 'Company');
         if (email) return `email:${email}`;
         if (phone) return `phone:${phone}`;
-        return `name:${name || ''}|${company || ''}`;
+        if (name || company) return `name:${name || ''}|${company || ''}`;
+        return null;
     };
 
     const groups = new Map();
     for (const row of rows) {
-        const name = pick(row, 'name', 'Name');
-        if (!name) {
-            skipped++;
+        const key = getCustomerKey(row);
+        if (!key) {
+            skippedNoKey++;
             continue;
         }
-        const key = getCustomerKey(row);
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(row);
     }
@@ -588,7 +607,7 @@ exports.uploadCustomersCsv = async (req, res) => {
     for (const [, groupRows] of groups) {
         try {
             const row = groupRows[0];
-            const name = pick(row, 'name', 'Name');
+            const name = getDisplayName(row);
             const email = pick(row, 'email', 'Email');
             const phone = pick(row, 'phone', 'Phone');
             const companyName = pick(row, 'company_name', 'company name', 'Company');
@@ -599,21 +618,35 @@ exports.uploadCustomersCsv = async (req, res) => {
                 `SELECT customer_id FROM customers WHERE (email = $1 AND $1 IS NOT NULL) OR (phone = $2 AND $2 IS NOT NULL) LIMIT 1`,
                 [email || null, phone || null]
             );
+
+            let customerId;
             if (existing.rows.length > 0) {
-                skipped++;
-                continue;
+                if (!addToExisting) {
+                    skippedDuplicate++;
+                    continue;
+                }
+                customerId = existing.rows[0].customer_id;
+            } else {
+                const custRes = await pool.query(
+                    `INSERT INTO customers (name, company_name, email, phone, gst_no, type, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                     RETURNING customer_id`,
+                    [name, companyName || null, email || null, phone || null, gstNo || null, type]
+                );
+                customerId = custRes.rows[0].customer_id;
+                imported++;
             }
 
-            const custRes = await pool.query(
-                `INSERT INTO customers (name, company_name, email, phone, gst_no, type, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 RETURNING customer_id`,
-                [name, companyName || null, email || null, phone || null, gstNo || null, type]
-            );
-            const customerId = custRes.rows[0].customer_id;
-
             const seenAddresses = new Set();
-            let isFirst = true;
+            const existingAddrs = existing.rows.length > 0 ? await pool.query(
+                `SELECT LOWER(address) as addr, pincode FROM customer_addresses WHERE customer_id = $1`,
+                [customerId]
+            ) : { rows: [] };
+            for (const a of existingAddrs.rows) {
+                seenAddresses.add(`${(a.addr || '').toLowerCase()}|${(a.pincode || '').trim()}`);
+            }
+
+            let isFirst = seenAddresses.size === 0;
             for (const r of groupRows) {
                 const concernPerson = pick(r, 'concern_person', 'concern person', 'Contact');
                 const mobileNo = pick(r, 'mobile_no', 'mobile no', 'Mobile') || phone;
@@ -629,16 +662,29 @@ exports.uploadCustomersCsv = async (req, res) => {
                          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                         [customerId, concernPerson || null, mobileNo || null, address, pincode || null, isFirst, addressType]
                     );
+                    addressesAdded++;
+                    if (existing.rows.length > 0) addressesAddedToExisting++;
                     isFirst = false;
                 }
             }
-            imported++;
         } catch (err) {
             failed++;
+            console.error('Customer CSV import error:', err.message);
         }
     }
 
-    res.json({ success: true, imported, skipped, failed });
+    res.json({
+        success: true,
+        totalRows: rows.length,
+        imported,
+        addressesAdded,
+        skippedNoName,
+        skippedNoKey,
+        skippedDuplicate,
+        addressesAddedToExisting,
+        failed,
+        message: `Imported ${imported} customers, ${addressesAdded} addresses. Skipped: ${skippedDuplicate} duplicates, ${skippedNoKey} no key. ${failed} failed.`
+    });
 };
 
 exports.createOrder = async (req, res) => {
@@ -980,8 +1026,68 @@ exports.createOrder = async (req, res) => {
     }
 };
 
+exports.getOrderStats = async (req, res) => {
+    const { date_from, date_to, status, owner } = req.query;
+    const hasGlobalAccess = ['admin', 'manager', 'floor_manager'].includes(req.user.role) ||
+        (req.user.permissions && (req.user.permissions.includes('qc_access') || req.user.permissions.includes('dispatch_access')));
+
+    try {
+        const conditions = ["o.status != 'Cancelled'"];
+        const params = [];
+        let paramCount = 1;
+
+        if (!hasGlobalAccess || owner === 'mine') {
+            conditions.push(`o.owner_user_id = $${paramCount}`);
+            params.push(req.user.user_id);
+            paramCount++;
+        }
+        if (status) {
+            conditions.push(`o.status = $${paramCount}`);
+            params.push(status);
+            paramCount++;
+        }
+        if (date_from) {
+            conditions.push(`o.created_at >= $${paramCount}`);
+            params.push(date_from + 'T00:00:00.000Z');
+            paramCount++;
+        }
+        if (date_to) {
+            conditions.push(`o.created_at <= $${paramCount}`);
+            params.push(date_to + 'T23:59:59.999Z');
+            paramCount++;
+        }
+
+        const where = conditions.join(' AND ');
+        const result = await pool.query(`
+            SELECT
+                COALESCE(o.customer_type, 'New') as customer_type,
+                COUNT(DISTINCT o.order_id) as order_count,
+                COALESCE(SUM(oi.quantity), 0)::int as laptop_count
+            FROM orders o
+            LEFT JOIN order_items oi ON o.order_id = oi.order_id
+            WHERE ${where}
+            GROUP BY COALESCE(o.customer_type, 'New')
+        `, params);
+
+        const newRow = result.rows.find(r => r.customer_type === 'New') || { order_count: 0, laptop_count: 0 };
+        const existingRow = result.rows.find(r => r.customer_type === 'Existing') || { order_count: 0, laptop_count: 0 };
+
+        res.json({
+            newCustomerOrders: parseInt(newRow.order_count, 10) || 0,
+            existingCustomerOrders: parseInt(existingRow.order_count, 10) || 0,
+            newCustomerLaptops: parseInt(newRow.laptop_count, 10) || 0,
+            existingCustomerLaptops: parseInt(existingRow.laptop_count, 10) || 0,
+            totalOrders: (parseInt(newRow.order_count, 10) || 0) + (parseInt(existingRow.order_count, 10) || 0),
+            totalLaptops: (parseInt(newRow.laptop_count, 10) || 0) + (parseInt(existingRow.laptop_count, 10) || 0)
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to fetch order stats' });
+    }
+};
+
 exports.getOrders = async (req, res) => {
-    const { status, owner } = req.query;
+    const { status, owner, date_from, date_to } = req.query;
     const hasGlobalOrderAccess =
         ['admin', 'manager', 'floor_manager'].includes(req.user.role) ||
         (req.user.permissions && (req.user.permissions.includes('qc_access') || req.user.permissions.includes('dispatch_access')));
@@ -1031,6 +1137,17 @@ exports.getOrders = async (req, res) => {
         if (req.query.customer_type) {
             conditions.push(`COALESCE(o.customer_type, 'New') = $${paramCount}`);
             params.push(req.query.customer_type);
+            paramCount++;
+        }
+
+        if (date_from) {
+            conditions.push(`o.created_at >= $${paramCount}`);
+            params.push(date_from + 'T00:00:00.000Z');
+            paramCount++;
+        }
+        if (date_to) {
+            conditions.push(`o.created_at <= $${paramCount}`);
+            params.push(date_to + 'T23:59:59.999Z');
             paramCount++;
         }
 

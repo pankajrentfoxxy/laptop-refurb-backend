@@ -41,6 +41,18 @@ async function main() {
     UPDATE leads SET status = 'Deal' WHERE status = 'Repeat';
   `);
 
+  // Migration 009: Lead remarks
+  await runMigration('009_lead_remarks', `
+    CREATE TABLE IF NOT EXISTS lead_remarks (
+      remark_id SERIAL PRIMARY KEY,
+      lead_id INTEGER NOT NULL REFERENCES leads(lead_id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(user_id),
+      note TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_lead_remarks_lead ON lead_remarks(lead_id);
+  `);
+
   // Drop only leads_status_check and add new one; restore research_status_check if missing
   const client = await pool.connect();
   try {
