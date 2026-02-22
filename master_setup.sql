@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS leads (
     phone VARCHAR(50),
     city VARCHAR(100),
     source VARCHAR(100),
-    status VARCHAR(50) NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Deal', 'Repeat')),
+    status VARCHAR(50) NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Call Back', 'Deal')),
     assigned_user_id INTEGER REFERENCES users(user_id),
     assigned_by INTEGER REFERENCES users(user_id),
     assigned_at TIMESTAMP WITH TIME ZONE,

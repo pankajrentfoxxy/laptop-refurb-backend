@@ -5,7 +5,7 @@ const prisma = require('../prisma/client');
 const pool = require('../config/db');
 const { researchLeadCompany } = require('../services/perplexityService');
 
-const LEAD_STATUSES = ['Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Deal', 'Repeat'];
+const LEAD_STATUSES = ['Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Call Back', 'Deal'];
 
 const normalizeEmail = (value) => (value || '').trim().toLowerCase();
 const normalizePhone = (value) => (value || '').replace(/\s+/g, '');
@@ -182,8 +182,8 @@ const ensureCustomerFromLead = async (leadId) => {
 
   if (headOffice) {
     await pool.query(
-      `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, true, 'Billing', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT (customer_id, is_head_office)
        WHERE is_head_office = true
        DO UPDATE SET
@@ -191,14 +191,15 @@ const ensureCustomerFromLead = async (leadId) => {
          mobile_no = EXCLUDED.mobile_no,
          address = EXCLUDED.address,
          pincode = EXCLUDED.pincode,
+         address_type = EXCLUDED.address_type,
          updated_at = CURRENT_TIMESTAMP`,
       [customerId, lead.name || null, lead.phone || null, headOffice, lead.pincode || null]
     );
   }
 
   await pool.query(
-    `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, source_lead_address_id, created_at, updated_at)
-     SELECT $1, la.concern_person, la.mobile_no, la.address, la.pincode, false, la.address_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type, source_lead_address_id, created_at, updated_at)
+     SELECT $1, la.concern_person, la.mobile_no, la.address, la.pincode, false, COALESCE(la.address_type, 'Shipping'), la.address_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
      FROM lead_addresses la
      WHERE la.lead_id = $2
      ON CONFLICT (source_lead_address_id) DO NOTHING`,
@@ -236,33 +237,49 @@ const normalizeArrayField = (value) => {
 };
 
 exports.getLeads = async (req, res) => {
-  const { status, assigned_to, search, include_duplicates } = req.query;
+  const { status, assigned_to, source, date_from, date_to, search, include_duplicates } = req.query;
 
   try {
-    const where = {};
-
-    if (status) where.status = status;
+    const andConditions = [];
 
     if (!include_duplicates || include_duplicates === 'false') {
-      where.isDuplicate = false;
+      andConditions.push({ isDuplicate: false });
     }
+    if (status) andConditions.push({ status });
+    if (source) andConditions.push({ source });
 
     if (req.user.role === 'sales') {
-      where.assignedUserId = req.user.user_id;
+      andConditions.push({ assignedUserId: req.user.user_id });
     } else if (assigned_to) {
-      where.assignedUserId = parseInt(assigned_to, 10);
+      if (assigned_to === 'unassigned') {
+        andConditions.push({ assignedUserId: null });
+      } else {
+        const uid = parseInt(assigned_to, 10);
+        if (!isNaN(uid)) andConditions.push({ assignedUserId: uid });
+      }
+    }
+
+    if (date_from || date_to) {
+      const createdAtFilter = {};
+      if (date_from) createdAtFilter.gte = new Date(date_from + 'T00:00:00.000Z');
+      if (date_to) createdAtFilter.lte = new Date(date_to + 'T23:59:59.999Z');
+      andConditions.push({ createdAt: createdAtFilter });
     }
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { brand: { contains: search, mode: 'insensitive' } },
-        { companyName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search } },
-        { city: { contains: search, mode: 'insensitive' } }
-      ];
+      andConditions.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+          { companyName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { phone: { contains: search } },
+          { city: { contains: search, mode: 'insensitive' } }
+        ]
+      });
     }
+
+    const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const leads = await prisma.lead.findMany({
       where,
@@ -309,7 +326,7 @@ exports.getLeadById = async (req, res) => {
     }
 
     const addressRes = await pool.query(
-      `SELECT address_id, concern_person, mobile_no, address, pincode, created_at
+      `SELECT address_id, concern_person, mobile_no, address, pincode, address_type, created_at
        FROM lead_addresses
        WHERE lead_id = $1
        ORDER BY created_at DESC`,
@@ -326,6 +343,10 @@ exports.getLeadById = async (req, res) => {
 
 exports.createLead = async (req, res) => {
   const payload = buildLeadPayload(req.body || {});
+
+  if (!payload.phone || !String(payload.phone).trim()) {
+    return res.status(400).json({ success: false, message: 'Phone is required' });
+  }
 
   try {
     let duplicateOf = null;
@@ -580,7 +601,7 @@ exports.updateLeadStatus = async (req, res) => {
       }
     });
 
-    if (['Deal', 'Repeat'].includes(status)) {
+    if (status === 'Deal') {
       await ensureCustomerFromLead(lead.leadId);
     }
 
@@ -753,8 +774,8 @@ exports.createLeadOrder = async (req, res) => {
     const lead = await prisma.lead.findUnique({ where: { leadId: parseInt(id, 10) } });
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
 
-    if (!['Deal', 'Repeat'].includes(lead.status)) {
-      return res.status(400).json({ success: false, message: 'Order can be created only for Deal or Repeat status' });
+    if (lead.status !== 'Deal') {
+      return res.status(400).json({ success: false, message: 'Order can be created only for Deal status' });
     }
     if (req.user.role === 'sales' && lead.assignedUserId !== req.user.user_id) {
       return res.status(403).json({ success: false, message: 'Access denied' });
@@ -861,7 +882,7 @@ exports.getLeadAddresses = async (req, res) => {
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
     if (!canEditLead(req.user, lead)) return res.status(403).json({ success: false, message: 'Access denied' });
     const rows = await pool.query(
-      `SELECT address_id, concern_person, mobile_no, address, pincode, created_at
+      `SELECT address_id, concern_person, mobile_no, address, pincode, address_type, created_at
        FROM lead_addresses
        WHERE lead_id = $1
        ORDER BY created_at DESC`,
@@ -876,7 +897,7 @@ exports.getLeadAddresses = async (req, res) => {
 
 exports.addLeadAddress = async (req, res) => {
   const { id } = req.params;
-  const { concern_person, mobile_no, address, pincode } = req.body || {};
+  const { concern_person, mobile_no, address, pincode, address_type } = req.body || {};
   if (!address || !String(address).trim()) {
     return res.status(400).json({ success: false, message: 'Address is required' });
   }
@@ -885,10 +906,10 @@ exports.addLeadAddress = async (req, res) => {
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
     if (!canEditLead(req.user, lead)) return res.status(403).json({ success: false, message: 'Access denied' });
     const inserted = await pool.query(
-      `INSERT INTO lead_addresses (lead_id, concern_person, mobile_no, address, pincode, created_by, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
-       RETURNING address_id, concern_person, mobile_no, address, pincode, created_at`,
-      [id, concern_person || null, mobile_no || null, String(address).trim(), pincode || null, req.user.user_id]
+      `INSERT INTO lead_addresses (lead_id, concern_person, mobile_no, address, pincode, address_type, created_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+       RETURNING address_id, concern_person, mobile_no, address, pincode, address_type, created_at`,
+      [id, concern_person || null, mobile_no || null, String(address).trim(), pincode || null, address_type || 'Shipping', req.user.user_id]
     );
     res.status(201).json({ success: true, address: inserted.rows[0] });
   } catch (error) {
@@ -932,7 +953,7 @@ exports.getLeadCustomerProfile = async (req, res) => {
     if (!customerRes.rows.length) return res.json({ success: true, customer: null, addresses: [] });
     const customer = customerRes.rows[0];
     const addressesRes = await pool.query(
-      `SELECT customer_address_id, concern_person, mobile_no, address, pincode, is_head_office
+      `SELECT customer_address_id, concern_person, mobile_no, address, pincode, is_head_office, address_type
        FROM customer_addresses
        WHERE customer_id = $1
        ORDER BY is_head_office DESC, customer_address_id ASC`,
@@ -994,7 +1015,7 @@ exports.getReports = async (req, res) => {
     `;
 
     const dealCount = await prisma.lead.count({
-      where: { status: { in: ['Deal', 'Repeat'] } }
+      where: { status: 'Deal' }
     });
 
     const ordersCountRes = await prisma.$queryRaw`SELECT COUNT(*)::int AS count FROM orders`;

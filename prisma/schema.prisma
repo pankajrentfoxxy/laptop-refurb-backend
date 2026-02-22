@@ -151,6 +151,7 @@ model LeadAddress {
   mobileNo      String?  @map("mobile_no")
   address       String
   pincode       String?
+  addressType   String?  @map("address_type")
   createdBy     Int?     @map("created_by")
   createdAt     DateTime @default(now()) @map("created_at")
   lead          Lead     @relation(fields: [leadId], references: [leadId], onDelete: Cascade)
@@ -166,6 +167,7 @@ model CustomerAddress {
   address             String
   pincode             String?
   isHeadOffice        Boolean  @default(false) @map("is_head_office")
+  addressType         String?  @map("address_type")
   sourceLeadAddressId Int?     @unique @map("source_lead_address_id")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @default(now()) @map("updated_at")
@@ -179,6 +181,7 @@ model Order {
   customerId          Int         @map("customer_id")
   leadType            String?     @map("lead_type")
   orderType           String?     @default("Sales") @map("order_type")
+  customerType        String?     @default("New") @map("customer_type")
   status              String?     @default("New Lead")
   ownerUserId         Int?        @map("owner_user_id")
   lockinPeriodDays    Int?        @default(0) @map("lockin_period_days")

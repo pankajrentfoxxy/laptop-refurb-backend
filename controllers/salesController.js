@@ -43,7 +43,7 @@ const normalizeText = (value) => {
 
 const getCustomerAddressMap = async (db, customerId) => {
     const res = await db.query(
-        `SELECT customer_address_id, concern_person, mobile_no, address, pincode
+        `SELECT customer_address_id, concern_person, mobile_no, address, pincode, address_type
          FROM customer_addresses
          WHERE customer_id = $1`,
         [customerId]
@@ -405,14 +405,240 @@ exports.createCustomer = async (req, res) => {
     }
 };
 
+exports.getCustomerById = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query('SELECT * FROM customers WHERE customer_id = $1', [id]);
+        if (!result.rows.length) return res.status(404).json({ message: 'Customer not found' });
+        const addrRes = await pool.query(
+            `SELECT customer_address_id, customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type
+             FROM customer_addresses WHERE customer_id = $1 ORDER BY is_head_office DESC, customer_address_id ASC`,
+            [id]
+        );
+        res.json({ customer: { ...result.rows[0], addresses: addrRes.rows || [] } });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to fetch customer' });
+    }
+};
+
 exports.getCustomers = async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM customers ORDER BY created_at DESC');
-        res.json({ customers: result.rows });
+        const addrRes = await pool.query(
+            `SELECT customer_address_id, customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type
+             FROM customer_addresses ORDER BY is_head_office DESC, customer_address_id ASC`
+        );
+        const addrByCustomer = {};
+        (addrRes.rows || []).forEach((row) => {
+            const cid = row.customer_id;
+            if (!addrByCustomer[cid]) addrByCustomer[cid] = [];
+            addrByCustomer[cid].push(row);
+        });
+        const customers = (result.rows || []).map((c) => ({
+            ...c,
+            addresses: addrByCustomer[c.customer_id] || []
+        }));
+        res.json({ customers });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Failed to fetch customers' });
     }
+};
+
+exports.updateCustomer = async (req, res) => {
+    const { id } = req.params;
+    const { name, company_name, email, phone, gst_no, type, address } = req.body;
+
+    try {
+        await pool.query(
+            `UPDATE customers SET
+              name = COALESCE($1, name),
+              company_name = COALESCE($2, company_name),
+              email = COALESCE($3, email),
+              phone = COALESCE($4, phone),
+              gst_no = COALESCE($5, gst_no),
+              type = COALESCE($6, type),
+              address = COALESCE($7, address),
+              updated_at = CURRENT_TIMESTAMP
+             WHERE customer_id = $8`,
+            [name || null, company_name || null, email || null, phone || null, gst_no || null, type || null, address || null, id]
+        );
+        const res2 = await pool.query('SELECT * FROM customers WHERE customer_id = $1', [id]);
+        if (!res2.rows.length) return res.status(404).json({ message: 'Customer not found' });
+        res.json({ success: true, customer: res2.rows[0] });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to update customer' });
+    }
+};
+
+exports.updateCustomerAddress = async (req, res) => {
+    const { id, addr_id } = req.params;
+    const { concern_person, mobile_no, address, pincode, is_head_office, address_type } = req.body;
+
+    try {
+        const check = await pool.query(
+            'SELECT 1 FROM customer_addresses WHERE customer_address_id = $1 AND customer_id = $2',
+            [addr_id, id]
+        );
+        if (!check.rows.length) return res.status(404).json({ message: 'Address not found' });
+
+        await pool.query(
+            `UPDATE customer_addresses SET
+              concern_person = COALESCE($1, concern_person),
+              mobile_no = COALESCE($2, mobile_no),
+              address = COALESCE($3, address),
+              pincode = COALESCE($4, pincode),
+              is_head_office = COALESCE($5, is_head_office),
+              address_type = COALESCE($6, address_type),
+              updated_at = CURRENT_TIMESTAMP
+             WHERE customer_address_id = $7`,
+            [concern_person || null, mobile_no || null, address || null, pincode || null, is_head_office ?? false, address_type || null, addr_id]
+        );
+        const res2 = await pool.query('SELECT * FROM customer_addresses WHERE customer_address_id = $1', [addr_id]);
+        res.json({ success: true, address: res2.rows[0] });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to update address' });
+    }
+};
+
+exports.addCustomerAddress = async (req, res) => {
+    const { id } = req.params;
+    const { concern_person, mobile_no, address, pincode, is_head_office, address_type } = req.body;
+
+    try {
+        const check = await pool.query('SELECT 1 FROM customers WHERE customer_id = $1', [id]);
+        if (!check.rows.length) return res.status(404).json({ message: 'Customer not found' });
+
+        const res2 = await pool.query(
+            `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING *`,
+            [id, concern_person || null, mobile_no || null, address || '', pincode || null, is_head_office ?? false, address_type || null]
+        );
+        res.json({ success: true, address: res2.rows[0] });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to add address' });
+    }
+};
+
+exports.uploadCustomersCsv = async (req, res) => {
+    const csv = require('csv-parser');
+    const fs = require('fs');
+
+    if (!req.file || !req.file.path) {
+        return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const rows = [];
+    const filePath = req.file.path;
+
+    try {
+        await new Promise((resolve, reject) => {
+            fs.createReadStream(filePath)
+                .pipe(csv())
+                .on('data', (data) => rows.push(data))
+                .on('end', resolve)
+                .on('error', reject);
+        });
+        fs.unlinkSync(filePath);
+    } catch (err) {
+        try { fs.unlinkSync(filePath); } catch (_) {}
+        return res.status(400).json({ message: 'Failed to parse CSV', error: err.message });
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    const pick = (row, ...keys) => {
+        for (const k of keys) {
+            const v = row[k] || row[k.replace(/_/g, ' ')];
+            if (v !== undefined && String(v).trim()) return String(v).trim();
+        }
+        return null;
+    };
+
+    // Group rows by customer key (email > phone > name+company). Same customer in multiple rows = multiple addresses.
+    const getCustomerKey = (row) => {
+        const email = pick(row, 'email', 'Email');
+        const phone = pick(row, 'phone', 'Phone');
+        const name = pick(row, 'name', 'Name');
+        const company = pick(row, 'company_name', 'company name', 'Company');
+        if (email) return `email:${email}`;
+        if (phone) return `phone:${phone}`;
+        return `name:${name || ''}|${company || ''}`;
+    };
+
+    const groups = new Map();
+    for (const row of rows) {
+        const name = pick(row, 'name', 'Name');
+        if (!name) {
+            skipped++;
+            continue;
+        }
+        const key = getCustomerKey(row);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    }
+
+    for (const [, groupRows] of groups) {
+        try {
+            const row = groupRows[0];
+            const name = pick(row, 'name', 'Name');
+            const email = pick(row, 'email', 'Email');
+            const phone = pick(row, 'phone', 'Phone');
+            const companyName = pick(row, 'company_name', 'company name', 'Company');
+            const gstNo = pick(row, 'gst_no', 'gst no', 'GST');
+            const type = (pick(row, 'type', 'Type') || 'Existing').toLowerCase() === 'new' ? 'New' : 'Existing';
+
+            const existing = await pool.query(
+                `SELECT customer_id FROM customers WHERE (email = $1 AND $1 IS NOT NULL) OR (phone = $2 AND $2 IS NOT NULL) LIMIT 1`,
+                [email || null, phone || null]
+            );
+            if (existing.rows.length > 0) {
+                skipped++;
+                continue;
+            }
+
+            const custRes = await pool.query(
+                `INSERT INTO customers (name, company_name, email, phone, gst_no, type, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 RETURNING customer_id`,
+                [name, companyName || null, email || null, phone || null, gstNo || null, type]
+            );
+            const customerId = custRes.rows[0].customer_id;
+
+            const seenAddresses = new Set();
+            let isFirst = true;
+            for (const r of groupRows) {
+                const concernPerson = pick(r, 'concern_person', 'concern person', 'Contact');
+                const mobileNo = pick(r, 'mobile_no', 'mobile no', 'Mobile') || phone;
+                const address = pick(r, 'address', 'Address');
+                const pincode = pick(r, 'pincode', 'Pincode');
+                const addrKey = `${(address || '').toLowerCase()}|${(pincode || '').trim()}`;
+
+                if (address && !seenAddresses.has(addrKey)) {
+                    seenAddresses.add(addrKey);
+                    const addressType = (pick(r, 'address_type', 'address type', 'Address Type') || 'Shipping').trim() || 'Shipping';
+                    await pool.query(
+                        `INSERT INTO customer_addresses (customer_id, concern_person, mobile_no, address, pincode, is_head_office, address_type)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                        [customerId, concernPerson || null, mobileNo || null, address, pincode || null, isFirst, addressType]
+                    );
+                    isFirst = false;
+                }
+            }
+            imported++;
+        } catch (err) {
+            failed++;
+        }
+    }
+
+    res.json({ success: true, imported, skipped, failed });
 };
 
 exports.createOrder = async (req, res) => {
@@ -520,12 +746,24 @@ exports.createOrder = async (req, res) => {
             resolvedShippingAddress = formatCustomerAddressLine(headOfficeRes.rows[0]) || null;
         }
 
-        const orderRes = await client.query(
-            `INSERT INTO orders (customer_id, lead_type, order_type, status, owner_user_id, lockin_period_days, security_amount, estimate_id, is_wfh, shipping_charge, shipping_gst_amount, delivery_date, shipping_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING order_id`,
-            [customer_id, lead_type, order_type, initialStatus, owner_user_id, parsedLockin, parsedSecurity, orderEstimateId, shippingChargeFromItems > 0, shippingChargeFromItems, shippingGstAmount, delivery_date, resolvedShippingAddress]
+        // New vs Existing: first order = New, repeat order = Existing
+        const prevOrdersRes = await client.query(
+            `SELECT 1 FROM orders WHERE customer_id = $1 AND cancelled_at IS NULL LIMIT 1`,
+            [customer_id]
         );
+        const customerType = prevOrdersRes.rows.length === 0 ? 'New' : 'Existing';
+
+        const orderRes = await client.query(
+            `INSERT INTO orders (customer_id, lead_type, order_type, status, owner_user_id, lockin_period_days, security_amount, estimate_id, is_wfh, shipping_charge, shipping_gst_amount, delivery_date, shipping_address, customer_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING order_id`,
+            [customer_id, lead_type, order_type, initialStatus, owner_user_id, parsedLockin, parsedSecurity, orderEstimateId, shippingChargeFromItems > 0, shippingChargeFromItems, shippingGstAmount, delivery_date, resolvedShippingAddress, customerType]
+        );
+
+        // Update customer.type to Existing after first order
+        if (customerType === 'New') {
+            await client.query(`UPDATE customers SET type = 'Existing', updated_at = CURRENT_TIMESTAMP WHERE customer_id = $1`, [customer_id]);
+        }
         const orderId = orderRes.rows[0].order_id;
         const assignments = [];
         let subtotalAmount = 0;
@@ -752,7 +990,7 @@ exports.getOrders = async (req, res) => {
         let query = `
             SELECT 
                 o.order_id, o.status, o.lead_type, o.created_at, o.owner_user_id,
-                o.order_type, o.lockin_period_days, o.security_amount, o.estimate_id, o.is_wfh, o.shipping_charge, o.shipping_gst_amount,
+                o.order_type, o.customer_type, o.lockin_period_days, o.security_amount, o.estimate_id, o.is_wfh, o.shipping_charge, o.shipping_gst_amount,
                 o.subtotal_amount, o.items_gst_amount, o.grand_total_amount, o.invoice_number, o.eway_bill_number,
                 o.dispatch_date, o.tracker_id, o.courier_partner, o.dispatched_at, o.estimated_delivery,
                 c.name as customer_name, c.email as customer_email,
@@ -790,11 +1028,17 @@ exports.getOrders = async (req, res) => {
             conditions.push(`o.status != 'Cancelled'`);
         }
 
+        if (req.query.customer_type) {
+            conditions.push(`COALESCE(o.customer_type, 'New') = $${paramCount}`);
+            params.push(req.query.customer_type);
+            paramCount++;
+        }
+
         if (conditions.length > 0) {
             query += ' WHERE ' + conditions.join(' AND ');
         }
 
-        query += ` GROUP BY o.order_id, c.name, c.email, u.name ORDER BY o.created_at DESC`;
+        query += ` GROUP BY o.order_id, o.customer_type, c.name, c.email, u.name ORDER BY o.created_at DESC`;
 
         const result = await pool.query(query, params);
         res.json({ orders: result.rows });
@@ -897,7 +1141,7 @@ exports.getOrderDetails = async (req, res) => {
             WHERE oi.order_id = $1
         `, [id]);
         const customerAddressesRes = await pool.query(
-            `SELECT customer_address_id, concern_person, mobile_no, address, pincode, is_head_office
+            `SELECT customer_address_id, concern_person, mobile_no, address, pincode, is_head_office, address_type
              FROM customer_addresses
              WHERE customer_id = $1
              ORDER BY is_head_office DESC, customer_address_id ASC`,

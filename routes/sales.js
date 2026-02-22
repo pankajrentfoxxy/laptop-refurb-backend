@@ -1,10 +1,16 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { authMiddleware, checkPermission } = require('../middleware/auth');
 const {
     researchCompanyData,
     createCustomer,
     getCustomers,
+    getCustomerById,
+    updateCustomer,
+    updateCustomerAddress,
+    addCustomerAddress,
+    uploadCustomersCsv,
     createOrder,
     getOrders,
     getOrderDetails,
@@ -49,6 +55,33 @@ const requireQCAccess = (req, res, next) => {
     }
 };
 
+// Customers view: admin or customers_access
+const requireCustomersAccess = (req, res, next) => {
+    if (req.user.role === 'admin' || (req.user.permissions && req.user.permissions.includes('customers_access'))) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied: Customers access required' });
+    }
+};
+
+// Customers edit profile (name, GST, company): admin or customers_edit
+const requireCustomersEdit = (req, res, next) => {
+    if (req.user.role === 'admin' || (req.user.permissions && req.user.permissions.includes('customers_edit'))) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied: Customers edit permission required' });
+    }
+};
+
+// Address add/update: admin, customers_edit, or sales_access
+const requireAddressAccess = (req, res, next) => {
+    if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('customers_edit') || req.user.permissions.includes('sales_access')))) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied' });
+    }
+};
+
 // Dispatch access middleware
 const requireDispatchAccess = (req, res, next) => {
     if (req.user.role === 'sales') {
@@ -67,8 +100,31 @@ const requireDispatchAccess = (req, res, next) => {
 };
 
 router.post('/research', authMiddleware, requireSalesAccess, researchCompanyData);
-router.post('/customers', authMiddleware, requireSalesAccess, createCustomer);
-router.get('/customers', authMiddleware, requireSalesAccess, getCustomers);
+const upload = multer({ dest: 'uploads/' });
+
+router.post('/customers', authMiddleware, (req, res, next) => {
+    if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_edit')))) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied' });
+    }
+}, createCustomer);
+router.post('/customers/upload', authMiddleware, (req, res, next) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin only' });
+    next();
+}, upload.single('file'), uploadCustomersCsv);
+const requireCustomersOrSalesAccess = (req, res, next) => {
+    if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_access')))) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied' });
+    }
+};
+router.get('/customers', authMiddleware, requireCustomersOrSalesAccess, getCustomers);
+router.get('/customers/:id', authMiddleware, requireCustomersOrSalesAccess, getCustomerById);
+router.put('/customers/:id', authMiddleware, requireCustomersEdit, updateCustomer);
+router.put('/customers/:id/addresses/:addr_id', authMiddleware, requireAddressAccess, updateCustomerAddress);
+router.post('/customers/:id/addresses', authMiddleware, requireAddressAccess, addCustomerAddress);
 router.post('/orders', authMiddleware, requireSalesAccess, createOrder);
 router.get('/orders', authMiddleware, getOrders); // All logged-in users can fetch orders (filtered by role)
 router.get('/orders/:id', authMiddleware, getOrderDetails);
