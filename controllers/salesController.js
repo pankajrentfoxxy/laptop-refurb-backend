@@ -562,6 +562,7 @@ exports.uploadCustomersCsv = async (req, res) => {
 
     let imported = 0;
     let addressesAdded = 0;
+    let skippedNoName = 0;
     let skippedNoKey = 0;
     let skippedDuplicate = 0;
     let addressesAddedToExisting = 0;
@@ -756,7 +757,8 @@ exports.createOrder = async (req, res) => {
                 is_wfh: itemIsWfh,
                 shipping_charge: itemShippingCharge,
                 estimate_id: null,
-                destination_pincode: null
+                destination_pincode: null,
+                proposed_delivery_date: item.proposed_delivery_date || null
             };
         });
 
@@ -846,8 +848,8 @@ exports.createOrder = async (req, res) => {
                                 order_id, brand, processor, ram, storage, quantity, preferred_model, status, inventory_id,
                                 unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                 delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
-                                estimate_id, destination_pincode, tracking_status
-                             ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'Not Dispatched')`,
+                                estimate_id, destination_pincode, proposed_delivery_date, tracking_status
+                             ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')`,
                             [
                                 orderId,
                                 item.brand,
@@ -868,7 +870,8 @@ exports.createOrder = async (req, res) => {
                                 item.delivery_address || null,
                                 item.delivery_pincode || null,
                                 null,
-                                null
+                                null,
+                                item.proposed_delivery_date || null
                             ]
                         );
                     }
@@ -907,8 +910,8 @@ exports.createOrder = async (req, res) => {
                                     order_id, brand, processor, ram, storage, quantity, preferred_model, status, inventory_id,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
-                                    estimate_id, destination_pincode, tracking_status
-                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'Not Dispatched')`,
+                                    estimate_id, destination_pincode, proposed_delivery_date, tracking_status
+                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')`,
                                 [
                                     orderId,
                                     item.brand,
@@ -929,7 +932,8 @@ exports.createOrder = async (req, res) => {
                                     item.delivery_address || null,
                                     item.delivery_pincode || null,
                                     null,
-                                    null
+                                    null,
+                                    item.proposed_delivery_date || null
                                 ]
                             );
                         }
@@ -947,8 +951,8 @@ exports.createOrder = async (req, res) => {
                                     order_id, brand, processor, ram, storage, quantity, preferred_model, status,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
-                                    estimate_id, destination_pincode, tracking_status
-                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Procurement', $7, 18, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'Not Dispatched')
+                                    estimate_id, destination_pincode, proposed_delivery_date, tracking_status
+                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Procurement', $7, 18, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'Not Dispatched')
                                  RETURNING item_id`,
                                 [
                                     orderId,
@@ -969,7 +973,8 @@ exports.createOrder = async (req, res) => {
                                     item.delivery_address || null,
                                     item.delivery_pincode || null,
                                     null,
-                                    null
+                                    null,
+                                    item.proposed_delivery_date || null
                                 ]
                             );
                             await client.query(
@@ -1098,7 +1103,7 @@ exports.getOrders = async (req, res) => {
                 o.order_id, o.status, o.lead_type, o.created_at, o.owner_user_id,
                 o.order_type, o.customer_type, o.lockin_period_days, o.security_amount, o.estimate_id, o.is_wfh, o.shipping_charge, o.shipping_gst_amount,
                 o.subtotal_amount, o.items_gst_amount, o.grand_total_amount, o.invoice_number, o.eway_bill_number,
-                o.dispatch_date, o.tracker_id, o.courier_partner, o.dispatched_at, o.estimated_delivery,
+                o.dispatch_date, o.tracker_id, o.courier_partner, o.dispatched_at, o.estimated_delivery, o.delivery_date,
                 c.name as customer_name, c.email as customer_email,
                 u.name as owner_name,
                 COALESCE(SUM(oi.quantity), 0) as items_count,

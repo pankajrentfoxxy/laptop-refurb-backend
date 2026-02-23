@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const { authMiddleware, checkPermission } = require('../middleware/auth');
+const fs = require('fs');
+const { authMiddleware } = require('../middleware/auth');
 const {
     researchCompanyData,
     createCustomer,
@@ -49,7 +50,7 @@ const requireWarehouseAccess = (req, res, next) => {
 
 // QC access middleware
 const requireQCAccess = (req, res, next) => {
-    if (req.user.role === 'admin' || req.user.role === 'manager' || req.user.role === 'floor_manager' || (req.user.permissions && req.user.permissions.includes('qc_access'))) {
+    if (req.user.role === 'admin' || req.user.role === 'manager' || req.user.role === 'floor_manager' || req.user.role === 'qc' || (req.user.permissions && req.user.permissions.includes('qc_access'))) {
         next();
     } else {
         res.status(403).json({ message: 'Access denied: QC access required' });
@@ -92,6 +93,7 @@ const requireDispatchAccess = (req, res, next) => {
         req.user.role === 'admin' ||
         req.user.role === 'manager' ||
         req.user.role === 'floor_manager' ||
+        req.user.role === 'dispatch' ||
         (req.user.permissions && req.user.permissions.includes('dispatch_access'))
     ) {
         next();
@@ -101,7 +103,13 @@ const requireDispatchAccess = (req, res, next) => {
 };
 
 router.post('/research', authMiddleware, requireSalesAccess, researchCompanyData);
-const upload = multer({ dest: 'uploads/' });
+
+const customerUploadDir = 'uploads/customers';
+if (!fs.existsSync(customerUploadDir)) fs.mkdirSync(customerUploadDir, { recursive: true });
+const upload = multer({
+    dest: customerUploadDir,
+    limits: { fileSize: 5 * 1024 * 1024 }
+});
 
 router.post('/customers', authMiddleware, (req, res, next) => {
     if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_edit')))) {

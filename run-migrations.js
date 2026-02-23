@@ -41,6 +41,26 @@ async function main() {
     UPDATE leads SET status = 'Deal' WHERE status = 'Repeat';
   `);
 
+  // Migration 011: Add procurement/qc/dispatch roles, delete seed users
+  await runMigration('011_add_order_roles', `
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+    ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (
+      role IN ('admin', 'manager', 'sales', 'team_lead', 'team_member', 'viewer', 'floor_manager', 'procurement', 'qc', 'dispatch')
+    );
+    DELETE FROM users WHERE email IN ('procurement@rentfoxxy.com', 'qc@rentfoxxy.com', 'dispatch@rentfoxxy.com');
+  `);
+
+  // Migration 010: Order workflow teams (QC Team, Dispatch Team)
+  await runMigration('010_add_order_teams', `
+    INSERT INTO teams (team_name) SELECT 'QC Team' WHERE NOT EXISTS (SELECT 1 FROM teams WHERE team_name = 'QC Team');
+    INSERT INTO teams (team_name) SELECT 'Dispatch Team' WHERE NOT EXISTS (SELECT 1 FROM teams WHERE team_name = 'Dispatch Team');
+  `);
+
+  // Migration 012: Per-item proposed delivery date
+  await runMigration('012_add_proposed_delivery_date', `
+    ALTER TABLE order_items ADD COLUMN IF NOT EXISTS proposed_delivery_date DATE;
+  `);
+
   // Migration 009: Lead remarks
   await runMigration('009_lead_remarks', `
     CREATE TABLE IF NOT EXISTS lead_remarks (

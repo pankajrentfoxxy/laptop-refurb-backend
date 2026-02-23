@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
-const MANAGEABLE_ROLES = ['team_member', 'team_lead', 'sales', 'floor_manager', 'manager', 'admin'];
+const MANAGEABLE_ROLES = ['team_member', 'team_lead', 'sales', 'floor_manager', 'procurement', 'qc', 'dispatch', 'manager', 'admin'];
 const hasUserMgmtAccess = (user) => ['admin', 'manager'].includes(user?.role);
 const canViewUsers = (user) => ['admin', 'manager', 'floor_manager'].includes(user?.role);
 const canManageTargetUser = (actor, target) => {
@@ -30,6 +30,20 @@ exports.register = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Manager can only create team users/sales/floor manager' });
     }
 
+    // For procurement/qc/dispatch roles: auto-set permissions (standalone like Sales, no team)
+    let permissions = [];
+    let resolvedTeamId = team_id && team_id !== 'null' && team_id !== '' ? parseInt(team_id) : null;
+    if (normalizedRole === 'procurement') {
+      permissions = ['procurement_access'];
+      resolvedTeamId = null; // Standalone role like Sales
+    } else if (normalizedRole === 'qc') {
+      permissions = ['qc_access'];
+      resolvedTeamId = null; // Standalone role like Sales
+    } else if (normalizedRole === 'dispatch') {
+      permissions = ['dispatch_access'];
+      resolvedTeamId = null; // Standalone role like Sales
+    }
+
     // Check if user exists
     const userExists = await pool.query(
       'SELECT * FROM users WHERE email = $1',
@@ -48,15 +62,15 @@ exports.register = async (req, res) => {
     const password_hash = await bcrypt.hash(password, salt);
 
     // Create user
-    const safeTeamId = team_id && team_id !== 'null' ? parseInt(team_id) : null;
-    const defaultPermissions = [];
+    const safeTeamId = resolvedTeamId;
+    const finalPermissions = permissions;
 
     const mobileNo = mobile_no ? String(mobile_no).trim() : null;
     const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, team_id, active, permissions, mobile_no) 
        VALUES ($1, $2, $3, $4, $5, true, $6, $7) 
        RETURNING user_id, name, email, role, team_id, mobile_no, created_at`,
-      [name, email, password_hash, normalizedRole, safeTeamId, defaultPermissions, mobileNo || null]
+      [name, email, password_hash, normalizedRole, safeTeamId, finalPermissions, mobileNo || null]
     );
 
     const user = result.rows[0];
@@ -121,6 +135,7 @@ exports.login = async (req, res) => {
 
     // Remove password from response
     delete user.password_hash;
+    user.permissions = Array.isArray(user.permissions) ? user.permissions : [];
 
     res.json({
       success: true,
@@ -155,9 +170,11 @@ exports.getCurrentUser = async (req, res) => {
       });
     }
 
+    const user = result.rows[0];
+    user.permissions = Array.isArray(user.permissions) ? user.permissions : [];
     res.json({
       success: true,
-      user: result.rows[0]
+      user
     });
   } catch (error) {
     console.error('Get current user error:', error);

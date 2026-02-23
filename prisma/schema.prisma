@@ -244,6 +244,7 @@ model OrderItem {
   itemCourierPartner    String?              @map("item_courier_partner")
   itemDispatchDate      DateTime?            @map("item_dispatch_date") @db.Date
   itemEstimatedDelivery DateTime?            @map("item_estimated_delivery") @db.Date
+  proposedDeliveryDate DateTime?            @map("proposed_delivery_date") @db.Date
   deliveredAt           DateTime?            @map("delivered_at")
   createdAt             DateTime             @default(now()) @map("created_at")
   order                 Order                @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
