@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const prisma = require('../prisma/client');
 const pool = require('../config/db');
 const { researchLeadCompany } = require('../services/perplexityService');
+const { getNextAutoAssignee, updateAutoAssignConfig } = require('../services/leadAutoAssignService');
 
 const LEAD_STATUSES = ['Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Call Back', 'Deal'];
 
@@ -382,13 +383,15 @@ exports.createLead = async (req, res) => {
     const hasSalesAccess = Array.isArray(req.user.permissions) && req.user.permissions.includes('sales_access');
     const isSalesOperator = req.user.role === 'sales' || (!['admin', 'manager'].includes(req.user.role) && hasSalesAccess);
 
-    const selfAssignedData = isSalesOperator
-      ? {
-          assignedUserId: req.user.user_id,
-          assignedById: req.user.user_id,
-          assignedAt: new Date()
-        }
-      : {};
+    let assignData = {};
+    if (isSalesOperator) {
+      assignData = { assignedUserId: req.user.user_id, assignedById: req.user.user_id, assignedAt: new Date() };
+    } else {
+      const autoAssignee = await getNextAutoAssignee();
+      if (autoAssignee) {
+        assignData = { assignedUserId: autoAssignee, assignedById: req.user.user_id, assignedAt: new Date() };
+      }
+    }
 
     const lead = await prisma.lead.create({
       data: {
@@ -396,7 +399,7 @@ exports.createLead = async (req, res) => {
         brand: payload.brand,
         status: 'Pending',
         createdAt: new Date(),
-        ...selfAssignedData,
+        ...assignData,
         isDuplicate: !!duplicateOf,
         duplicateOf: duplicateOf || null
       }
@@ -456,13 +459,19 @@ exports.uploadLeadsCsv = async (req, res) => {
             if (existing) duplicateOf = existing.leadId;
           }
 
+          const autoAssignee = await getNextAutoAssignee();
+          const assignData = autoAssignee
+            ? { assignedUserId: autoAssignee, assignedById: req.user.user_id, assignedAt: new Date() }
+            : {};
+
           await prisma.lead.create({
             data: {
               ...payload,
               status: 'Pending',
               createdAt: new Date(),
               isDuplicate: !!duplicateOf,
-              duplicateOf: duplicateOf || null
+              duplicateOf: duplicateOf || null,
+              ...assignData
             }
           });
 
@@ -559,6 +568,10 @@ exports.assignLeads = async (req, res) => {
       }))
     });
 
+    if (assign_unassigned_only && eligibleUserIds.length) {
+      await updateAutoAssignConfig(eligibleUserIds, req.user.user_id);
+    }
+
     const leads = await prisma.lead.findMany({
       where: { leadId: { in: targetLeadIds } }
     });
@@ -572,9 +585,13 @@ exports.assignLeads = async (req, res) => {
       return acc;
     }, {});
 
+    const msg = assign_unassigned_only
+      ? `${assignmentPlan.length} unassigned leads distributed. Future leads (manual, upload, email) will also be auto-assigned to the selected users.`
+      : 'Leads assigned successfully';
+
     res.json({
       success: true,
-      message: 'Leads assigned successfully',
+      message: msg,
       batch_id: batchId,
       total_assigned: assignmentPlan.length,
       distribution
@@ -1063,6 +1080,17 @@ exports.getLeadOrders = async (req, res) => {
   }
 };
 
+exports.getAutoAssignConfig = async (req, res) => {
+  try {
+    const { getAutoAssignConfig } = require('../services/leadAutoAssignService');
+    const config = await getAutoAssignConfig();
+    res.json({ success: true, ...config });
+  } catch (error) {
+    console.error('Get auto-assign config error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
 exports.getReports = async (req, res) => {
   try {
     const totalLeads = await prisma.lead.count();
@@ -1073,12 +1101,13 @@ exports.getReports = async (req, res) => {
     });
 
     const teamWise = await prisma.$queryRaw`
-      SELECT t.team_name, COUNT(l.lead_id)::int AS count
+      SELECT
+        COALESCE(u.name, 'Unassigned') AS team_name,
+        COUNT(l.lead_id)::int AS count
       FROM leads l
       LEFT JOIN users u ON l.assigned_user_id = u.user_id
-      LEFT JOIN teams t ON u.team_id = t.team_id
-      GROUP BY t.team_name
-      ORDER BY t.team_name
+      GROUP BY u.user_id, u.name
+      ORDER BY count DESC, team_name
     `;
 
     const pendingLeads = await prisma.$queryRaw`

@@ -72,7 +72,7 @@ const fetchOrderDocData = async (orderId) => {
     );
     if (!orderRes.rows.length) return null;
     const itemsRes = await pool.query(
-        `SELECT oi.*, i.machine_number, i.serial_number
+        `SELECT oi.*, COALESCE(oi.generation, i.generation) AS generation, i.machine_number, i.serial_number
          FROM order_items oi
          LEFT JOIN inventory i ON oi.inventory_id = i.inventory_id
          WHERE oi.order_id = $1
@@ -874,15 +874,16 @@ exports.createOrder = async (req, res) => {
 
                         await client.query(
                             `INSERT INTO order_items (
-                                order_id, brand, processor, ram, storage, quantity, preferred_model, status, inventory_id,
+                                order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status, inventory_id,
                                 unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                 delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                 estimate_id, destination_pincode, proposed_delivery_date, tracking_status
-                             ) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, 18, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'Not Dispatched')`,
+                             ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, 18, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, 'Not Dispatched')`,
                             [
                                 orderId,
                                 item.brand,
                                 item.processor,
+                                item.generation || null,
                                 item.ram,
                                 item.storage,
                                 item.model || item.preferred_model,
@@ -943,15 +944,16 @@ exports.createOrder = async (req, res) => {
                             consumedInventoryIds.add(inventoryId);
                             await client.query(
                                 `INSERT INTO order_items (
-                                    order_id, brand, processor, ram, storage, quantity, preferred_model, status, inventory_id,
+                                    order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status, inventory_id,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                     estimate_id, destination_pincode, proposed_delivery_date, tracking_status
-                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, 18, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'Not Dispatched')`,
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, 18, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, 'Not Dispatched')`,
                                 [
                                     orderId,
                                     item.brand,
                                     item.processor,
+                                    item.generation || null,
                                     item.ram,
                                     item.storage,
                                     item.preferred_model,
@@ -985,16 +987,17 @@ exports.createOrder = async (req, res) => {
 
                             const itemRes = await client.query(
                                 `INSERT INTO order_items (
-                                    order_id, brand, processor, ram, storage, quantity, preferred_model, status,
+                                    order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                     estimate_id, destination_pincode, proposed_delivery_date, tracking_status
-                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Procurement', $7, 18, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'Not Dispatched')
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'Procurement', $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')
                                  RETURNING item_id`,
                                 [
                                     orderId,
                                     item.brand,
                                     item.processor,
+                                    item.generation || null,
                                     item.ram,
                                     item.storage,
                                     item.preferred_model,
@@ -1147,6 +1150,7 @@ exports.getOrders = async (req, res) => {
                 o.subtotal_amount, o.items_gst_amount, o.grand_total_amount, o.invoice_number, o.eway_bill_number,
                 o.dispatch_date, o.tracker_id, o.courier_partner, o.dispatched_at, o.estimated_delivery, o.delivery_date,
                 c.name as customer_name, c.email as customer_email,
+                c.company_name, c.gst_no,
                 u.name as owner_name,
                 COALESCE(SUM(oi.quantity), 0) as items_count,
                 COALESCE(SUM(CASE WHEN oi.status = 'Assigned' THEN oi.quantity ELSE 0 END), 0) as assigned_count,
@@ -1202,13 +1206,55 @@ exports.getOrders = async (req, res) => {
             query += ' WHERE ' + conditions.join(' AND ');
         }
 
-        query += ` GROUP BY o.order_id, o.customer_type, c.name, c.email, u.name ORDER BY o.created_at DESC`;
+        query += ` GROUP BY o.order_id, o.customer_type, c.name, c.email, c.company_name, c.gst_no, u.name ORDER BY o.created_at DESC`;
 
         const result = await pool.query(query, params);
         res.json({ orders: result.rows });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Failed to fetch orders' });
+    }
+};
+
+exports.getPipelineLaptops = async (req, res) => {
+    const hasGlobalOrderAccess =
+        ['admin', 'manager', 'floor_manager'].includes(req.user.role) ||
+        (req.user.permissions && (req.user.permissions.includes('qc_access') || req.user.permissions.includes('dispatch_access')));
+
+    try {
+        let query = `
+            SELECT
+                oi.order_id,
+                oi.item_id,
+                oi.brand,
+                oi.processor,
+                COALESCE(oi.generation, i.generation) AS generation,
+                oi.ram,
+                oi.storage,
+                oi.preferred_model,
+                i.machine_number,
+                i.serial_number,
+                oi.status AS item_status,
+                oi.tracking_status,
+                c.company_name
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN customers c ON o.customer_id = c.customer_id
+            LEFT JOIN inventory i ON oi.inventory_id = i.inventory_id
+            WHERE o.status IN ('Procurement Pending', 'Warehouse Pending', 'QC Pending', 'QC Passed')
+        `;
+        const params = [];
+        if (!hasGlobalOrderAccess) {
+            query += ` AND o.owner_user_id = $1`;
+            params.push(req.user.user_id);
+        }
+        query += ` ORDER BY oi.order_id ASC, oi.item_id ASC`;
+
+        const result = await pool.query(query, params);
+        res.json({ laptops: result.rows });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to fetch pipeline laptops' });
     }
 };
 
@@ -1293,6 +1339,7 @@ exports.getOrderDetails = async (req, res) => {
         const itemsRes = await pool.query(`
             SELECT
                 oi.*,
+                COALESCE(oi.generation, i.generation) AS generation,
                 i.machine_number,
                 i.serial_number,
                 ca.concern_person AS linked_concern_person,

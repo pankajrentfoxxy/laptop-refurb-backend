@@ -13,7 +13,7 @@ exports.getRequests = async (req, res) => {
     try {
         const includeReceived = req.query.include_received === 'true';
         const result = await pool.query(`
-            SELECT pr.*, oi.brand, oi.processor, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name
+            SELECT pr.*, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name
             FROM procurement_requests pr
             JOIN order_items oi ON pr.order_item_id = oi.item_id
             JOIN orders o ON oi.order_id = o.order_id
@@ -56,7 +56,7 @@ exports.receiveItem = async (req, res) => {
 
         // 1. Get Request Details
         const reqResult = await client.query(`
-            SELECT pr.*, oi.brand, oi.processor, oi.ram, oi.storage, oi.preferred_model as model, oi.order_id
+            SELECT pr.*, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model as model, oi.order_id
             FROM procurement_requests pr
             JOIN order_items oi ON pr.order_item_id = oi.item_id
             WHERE pr.request_id = $1

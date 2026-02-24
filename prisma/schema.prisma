@@ -219,6 +219,7 @@ model OrderItem {
   orderId               Int                  @map("order_id")
   brand                 String?
   processor             String?
+  generation            String?
   ram                   String?
   storage               String?
   quantity              Int?                 @default(1)

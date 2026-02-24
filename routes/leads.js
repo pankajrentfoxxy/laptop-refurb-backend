@@ -29,6 +29,7 @@ router.get('/', leadController.getLeads);
 router.get('/follow-ups', leadController.getFollowUps);
 router.get('/orders', leadController.getLeadOrders);
 router.get('/reports', checkRole('admin', 'manager'), leadController.getReports);
+router.get('/auto-assign-config', checkRole('admin', 'manager'), leadController.getAutoAssignConfig);
 router.get('/sample', checkRole('admin', 'manager', 'sales'), leadController.getSampleCsv);
 router.get('/:id', leadController.getLeadById);
 

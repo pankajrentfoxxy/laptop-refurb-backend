@@ -126,6 +126,32 @@ async function main() {
     ALTER TABLE orders ALTER COLUMN security_amount TYPE DECIMAL(14, 2);
   `);
 
+  // Migration 016: order_items.generation
+  await runMigration('016_order_items_generation', `
+    ALTER TABLE order_items ADD COLUMN IF NOT EXISTS generation VARCHAR(80);
+  `);
+
+  // Migration 017: Backfill order_items.generation from inventory for existing orders
+  await runMigration('017_backfill_order_items_generation', `
+    UPDATE order_items oi
+    SET generation = i.generation
+    FROM inventory i
+    WHERE oi.inventory_id = i.inventory_id
+      AND (oi.generation IS NULL OR oi.generation = '')
+      AND (i.generation IS NOT NULL AND i.generation != '');
+  `);
+
+  // Migration 015: lead_auto_assign_config (default assignees for new/unassigned leads)
+  await runMigration('015_lead_auto_assign_config', `
+    CREATE TABLE IF NOT EXISTS lead_auto_assign_config (
+      id SERIAL PRIMARY KEY,
+      user_ids INTEGER[] NOT NULL DEFAULT '{}',
+      round_robin_index INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_by INTEGER REFERENCES users(user_id)
+    );
+  `);
+
   // Migration 008c: users.mobile_no (for auth)
   await runMigration('008c_users_mobile_no', `
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_no VARCHAR(50);

@@ -1,6 +1,7 @@
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const pool = require('../config/db');
+const { getNextAutoAssignee } = require('./leadAutoAssignService');
 
 const LEAD_EMAIL_POLL_INTERVAL_MS = parseInt(process.env.LEAD_EMAIL_POLL_INTERVAL_MS || '120000', 10);
 const LEAD_EMAIL_LOOKBACK_DAYS = parseInt(process.env.LEAD_EMAIL_LOOKBACK_DAYS || '14', 10);
@@ -250,11 +251,18 @@ const insertLeadFromEmail = async ({ parsedFields, subject, fromAddress, sentAt 
     const receivedAt = sentAt ? new Date(sentAt) : new Date();
     const safeReceivedAt = Number.isNaN(receivedAt.getTime()) ? new Date() : receivedAt;
 
+    const autoAssignee = await getNextAutoAssignee();
+    const assignCols = autoAssignee
+        ? 'name, company_name, email, phone, city, source, status, created_at, updated_at, assigned_user_id, assigned_at'
+        : 'name, company_name, email, phone, city, source, status, created_at, updated_at';
+    const assignVals = autoAssignee
+        ? `$1, $2, $3, $4, $5, 'Google', 'Pending', $6, $6, $7, $6`
+        : `$1, $2, $3, $4, $5, 'Google', 'Pending', $6, $6`;
+    const assignParams = autoAssignee ? [name, companyName, email, phone, city, safeReceivedAt, autoAssignee] : [name, companyName, email, phone, city, safeReceivedAt];
+
     const leadResult = await pool.query(
-        `INSERT INTO leads (name, company_name, email, phone, city, source, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'Google', 'Pending', $6, $6)
-         RETURNING lead_id`,
-        [name, companyName, email, phone, city, safeReceivedAt]
+        `INSERT INTO leads (${assignCols}) VALUES (${assignVals}) RETURNING lead_id`,
+        assignParams
     );
 
     const leadId = leadResult.rows[0].lead_id;

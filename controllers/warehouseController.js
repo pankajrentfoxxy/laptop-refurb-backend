@@ -13,7 +13,7 @@ exports.getWarehouseItems = async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT 
-                oi.item_id, oi.order_id, oi.brand, oi.processor, oi.ram, oi.storage, oi.preferred_model,
+                oi.item_id, oi.order_id, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model,
                 oi.status as item_status, oi.inventory_id,
                 i.machine_number, i.serial_number, i.stock_type,
                 o.status as order_status, o.customer_id,

@@ -16,6 +16,7 @@ const {
     getOrders,
     getOrderStats,
     getOrderDetails,
+    getPipelineLaptops,
     dispatchOrder,
     sendToQC,
     qcPassOrder,
@@ -137,6 +138,7 @@ router.post('/customers/:id/addresses', authMiddleware, requireAddressAccess, ad
 router.post('/orders', authMiddleware, requireSalesAccess, createOrder);
 router.get('/orders', authMiddleware, getOrders); // All logged-in users can fetch orders (filtered by role)
 router.get('/orders/stats', authMiddleware, getOrderStats);
+router.get('/orders/pipeline-laptops', authMiddleware, requireDispatchAccess, getPipelineLaptops);
 router.get('/orders/:id', authMiddleware, getOrderDetails);
 router.put('/orders/:id/cancel', authMiddleware, requireSalesAccess, cancelOrder);
 router.put('/orders/:id/dispatch', authMiddleware, requireDispatchAccess, dispatchOrder);
