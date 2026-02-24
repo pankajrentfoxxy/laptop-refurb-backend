@@ -30,6 +30,36 @@ async function runMigration(name, sql) {
 async function main() {
   console.log('Running migrations...\n');
 
+  // Migration 005: Order item level logistics (required for order creation)
+  await runMigration('005_order_item_level_logistics', `
+    ALTER TABLE orders
+      ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE,
+      ADD COLUMN IF NOT EXISTS cancelled_by INTEGER;
+    ALTER TABLE order_items
+      ADD COLUMN IF NOT EXISTS gst_percent DECIMAL(5, 2) DEFAULT 18,
+      ADD COLUMN IF NOT EXISTS gst_amount DECIMAL(10, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS total_with_gst DECIMAL(10, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS is_wfh BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS shipping_charge DECIMAL(10, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_mode VARCHAR(30) DEFAULT 'Office',
+      ADD COLUMN IF NOT EXISTS customer_address_id INTEGER,
+      ADD COLUMN IF NOT EXISTS delivery_contact_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS delivery_contact_phone VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS delivery_address TEXT,
+      ADD COLUMN IF NOT EXISTS delivery_pincode VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS estimate_id VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS destination_pincode VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(30) DEFAULT 'Not Dispatched',
+      ADD COLUMN IF NOT EXISTS item_tracker_id VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS item_courier_partner VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS item_dispatch_date DATE,
+      ADD COLUMN IF NOT EXISTS item_estimated_delivery DATE,
+      ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE;
+    CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_order_items_tracking_status ON order_items(order_id, tracking_status);
+    CREATE INDEX IF NOT EXISTS idx_order_items_destination ON order_items(order_id, destination_pincode);
+  `);
+
   // Migration 007: address_type
   await runMigration('007_add_address_type', `
     ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS address_type VARCHAR(30);
@@ -45,9 +75,14 @@ async function main() {
   await runMigration('011_add_order_roles', `
     ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
     ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (
-      role IN ('admin', 'manager', 'sales', 'team_lead', 'team_member', 'viewer', 'floor_manager', 'procurement', 'qc', 'dispatch')
+      role IN ('admin', 'manager', 'sales', 'team_lead', 'team_member', 'viewer', 'floor_manager', 'procurement', 'qc', 'dispatch', 'warehouse')
     );
     DELETE FROM users WHERE email IN ('procurement@rentfoxxy.com', 'qc@rentfoxxy.com', 'dispatch@rentfoxxy.com');
+  `);
+
+  // Migration 013: Warehouse Team
+  await runMigration('013_warehouse_team', `
+    INSERT INTO teams (team_name) SELECT 'Warehouse Team' WHERE NOT EXISTS (SELECT 1 FROM teams WHERE team_name = 'Warehouse Team');
   `);
 
   // Migration 010: Order workflow teams (QC Team, Dispatch Team)
@@ -59,6 +94,55 @@ async function main() {
   // Migration 012: Per-item proposed delivery date
   await runMigration('012_add_proposed_delivery_date', `
     ALTER TABLE order_items ADD COLUMN IF NOT EXISTS proposed_delivery_date DATE;
+  `);
+
+  // Migration 014: Fix numeric overflow - ensure DECIMAL columns have sufficient precision
+  // Add missing orders columns first, then alter types
+  await runMigration('014_orders_columns', `
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS lockin_period_days INTEGER DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS security_amount DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimate_id VARCHAR(120);
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_wfh BOOLEAN DEFAULT false;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_charge DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_gst_amount DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS subtotal_amount DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_gst_amount DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS grand_total_amount DECIMAL(14, 2) DEFAULT 0;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_type VARCHAR(20);
+  `);
+  await runMigration('014_numeric_precision', `
+    ALTER TABLE order_items ALTER COLUMN unit_price TYPE DECIMAL(14, 2);
+    ALTER TABLE order_items ALTER COLUMN gst_percent TYPE DECIMAL(10, 2);
+    ALTER TABLE order_items ALTER COLUMN gst_amount TYPE DECIMAL(14, 2);
+    ALTER TABLE order_items ALTER COLUMN total_with_gst TYPE DECIMAL(14, 2);
+    ALTER TABLE order_items ALTER COLUMN shipping_charge TYPE DECIMAL(14, 2);
+  `);
+  await runMigration('014_orders_precision', `
+    ALTER TABLE orders ALTER COLUMN subtotal_amount TYPE DECIMAL(14, 2);
+    ALTER TABLE orders ALTER COLUMN items_gst_amount TYPE DECIMAL(14, 2);
+    ALTER TABLE orders ALTER COLUMN grand_total_amount TYPE DECIMAL(14, 2);
+    ALTER TABLE orders ALTER COLUMN shipping_charge TYPE DECIMAL(14, 2);
+    ALTER TABLE orders ALTER COLUMN shipping_gst_amount TYPE DECIMAL(14, 2);
+    ALTER TABLE orders ALTER COLUMN security_amount TYPE DECIMAL(14, 2);
+  `);
+
+  // Migration 008c: users.mobile_no (for auth)
+  await runMigration('008c_users_mobile_no', `
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_no VARCHAR(50);
+  `);
+
+  // Migration 008b: order_status_history (required for createOrder)
+  await runMigration('008b_order_status_history', `
+    CREATE TABLE IF NOT EXISTS order_status_history (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
+      from_status VARCHAR(50),
+      to_status VARCHAR(50) NOT NULL,
+      changed_by INTEGER REFERENCES users(user_id),
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_status_history_order ON order_status_history(order_id);
   `);
 
   // Migration 009: Lead remarks

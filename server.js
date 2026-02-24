@@ -51,6 +51,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tickets', require('./routes/tickets'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/procurement', require('./routes/procurement'));
+app.use('/api/warehouse', require('./routes/warehouse'));
 
 
 app.use('/api/stages', require('./routes/stages'));

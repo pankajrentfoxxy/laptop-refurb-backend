@@ -19,6 +19,15 @@ const COMPANY_DETAILS = {
 };
 
 const formatINR = (value) => `Rs. ${Number(value || 0).toFixed(2)}`;
+// Round to 2 decimals and return as string for PostgreSQL to avoid numeric overflow
+const MAX_MONEY = 999999999.99;
+const safeMoney = (v) => {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n)) return '0.00';
+  const clamped = Math.max(-MAX_MONEY, Math.min(MAX_MONEY, n));
+  return (Math.round(clamped * 100) / 100).toFixed(2);
+};
+const roundMoney = (v) => Number(safeMoney(v));
 const formatDate = (value) => (value ? new Date(value).toLocaleDateString('en-IN') : '-');
 const supplierStateCode = (COMPANY_DETAILS.gst || '').slice(0, 2);
 const extractStateCode = (gst) => {
@@ -712,7 +721,7 @@ exports.createOrder = async (req, res) => {
 
         // Create Order
         const initialStatus = status || 'New Lead';
-        const parsedSecurity = parseFloat(security_amount) || 0;
+        const parsedSecurity = roundMoney(security_amount);
         const parsedLockin = parseInt(lockin_period_days, 10) || 0;
         const orderEstimateId = normalizeText(estimate_id);
         const customerAddressMap = await getCustomerAddressMap(client, customer_id);
@@ -762,11 +771,11 @@ exports.createOrder = async (req, res) => {
             };
         });
 
-        const shippingChargeFromItems = normalizedItems.reduce(
+        const shippingChargeFromItems = roundMoney(normalizedItems.reduce(
             (sum, item) => sum + (item.is_wfh ? (parseFloat(item.shipping_charge) || 0) : 0),
             0
-        );
-        const shippingGstAmount = shippingChargeFromItems * GST_RATE;
+        ));
+        const shippingGstAmount = roundMoney(shippingChargeFromItems * GST_RATE);
 
         let resolvedShippingAddress = shipping_address || null;
         if (!resolvedShippingAddress && customer_address_id) {
@@ -805,7 +814,7 @@ exports.createOrder = async (req, res) => {
             `INSERT INTO orders (customer_id, lead_type, order_type, status, owner_user_id, lockin_period_days, security_amount, estimate_id, is_wfh, shipping_charge, shipping_gst_amount, delivery_date, shipping_address, customer_type)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING order_id`,
-            [customer_id, lead_type, order_type, initialStatus, owner_user_id, parsedLockin, parsedSecurity, orderEstimateId, shippingChargeFromItems > 0, shippingChargeFromItems, shippingGstAmount, delivery_date, resolvedShippingAddress, customerType]
+            [customer_id, lead_type, order_type, initialStatus, owner_user_id, parsedLockin, parseFloat(safeMoney(parsedSecurity)), orderEstimateId, shippingChargeFromItems > 0, parseFloat(safeMoney(shippingChargeFromItems)), parseFloat(safeMoney(shippingGstAmount)), delivery_date || null, resolvedShippingAddress, customerType]
         );
 
         // Update customer.type to Existing after first order
@@ -822,23 +831,43 @@ exports.createOrder = async (req, res) => {
         if (normalizedItems.length > 0) {
             for (const item of normalizedItems) {
                 const quantity = parseInt(item.quantity) || 1;
-                const unitPrice = parseFloat(item.unit_price) || 0;
-                const perLaptopShipping = item.is_wfh ? (parseFloat(item.shipping_charge) || 0) : 0;
+                const unitPrice = roundMoney(item.unit_price);
+                const perLaptopShipping = roundMoney(item.is_wfh ? item.shipping_charge : 0);
 
                 if (item.inventory_ids && item.inventory_ids.length > 0) {
                     const candidateIds = item.inventory_ids
                         .map((value) => parseInt(value, 10))
                         .filter((value) => Number.isInteger(value) && value > 0 && !consumedInventoryIds.has(value));
                     const idsToReserve = candidateIds.slice(0, quantity);
+                    let hasWarehouse = false;
+                    let allAssigned = true;
                     for (let index = 0; index < quantity; index++) {
                         const invId = idsToReserve[index];
                         const lineSubtotal = unitPrice;
-                        const lineGst = lineSubtotal * GST_RATE;
-                        const lineTotal = lineSubtotal + lineGst;
+                        const lineGst = roundMoney(lineSubtotal * GST_RATE);
+                        const lineTotal = roundMoney(lineSubtotal + lineGst);
                         subtotalAmount += lineSubtotal;
                         itemsGstAmount += lineGst;
 
+                        let itemStatus = 'Assigned';
                         if (invId) {
+                            const invRes = await client.query(
+                                `SELECT stock_type, status FROM inventory WHERE inventory_id = $1 FOR UPDATE`,
+                                [invId]
+                            );
+                            const inv = invRes.rows[0];
+                            if (!inv) {
+                                throw new Error(`Inventory ${invId} not found`);
+                            }
+                            if (inv.status !== 'Ready' && inv.status !== 'In Stock') {
+                                throw new Error(`Machine ${invId} is no longer available (already assigned to another order). Please refresh and select a different laptop.`);
+                            }
+                            const stockType = inv.stock_type || 'Ready';
+                            if (stockType === 'Cooling Period') {
+                                itemStatus = 'Warehouse';
+                                hasWarehouse = true;
+                                allAssigned = false;
+                            }
                             consumedInventoryIds.add(invId);
                             await client.query(`UPDATE inventory SET status = 'Reserved' WHERE inventory_id = $1`, [invId]);
                         }
@@ -849,7 +878,7 @@ exports.createOrder = async (req, res) => {
                                 unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                 delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                 estimate_id, destination_pincode, proposed_delivery_date, tracking_status
-                             ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')`,
+                             ) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, 18, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'Not Dispatched')`,
                             [
                                 orderId,
                                 item.brand,
@@ -857,12 +886,13 @@ exports.createOrder = async (req, res) => {
                                 item.ram,
                                 item.storage,
                                 item.model || item.preferred_model,
+                                itemStatus,
                                 invId || null,
-                                unitPrice,
-                                lineGst,
-                                lineTotal,
+                                parseFloat(safeMoney(unitPrice)),
+                                parseFloat(safeMoney(lineGst)),
+                                parseFloat(safeMoney(lineTotal)),
                                 !!item.is_wfh,
-                                perLaptopShipping,
+                                parseFloat(safeMoney(perLaptopShipping)),
                                 item.delivery_mode,
                                 item.customer_address_id || null,
                                 item.delivery_contact_name || null,
@@ -875,11 +905,12 @@ exports.createOrder = async (req, res) => {
                             ]
                         );
                     }
-                    assignments.push({ item, status: 'Assigned', quantity });
+                    assignments.push({ item, status: hasWarehouse ? 'Warehouse Needed' : 'Assigned', quantity });
                 } else {
                     const inventoryCheck = await client.query(
-                        `SELECT inventory_id FROM inventory 
+                        `SELECT inventory_id, stock_type FROM inventory 
                          WHERE (status = 'Ready' OR status = 'In Stock')
+                         AND (stock_type = 'Cooling Period' OR stock_type = 'Ready')
                          AND brand ILIKE $1 
                          AND processor ILIKE $2
                          AND ram ILIKE $3
@@ -895,11 +926,16 @@ exports.createOrder = async (req, res) => {
                     );
 
                     if (inventoryCheck.rows.length >= quantity) {
+                        let hasWarehouseFallback = false;
                         for (let index = 0; index < quantity; index++) {
-                            const inventoryId = inventoryCheck.rows[index].inventory_id;
+                            const row = inventoryCheck.rows[index];
+                            const inventoryId = row.inventory_id;
+                            const itemStatus = row.stock_type === 'Cooling Period' ? 'Warehouse' : 'Assigned';
+                            if (itemStatus === 'Warehouse') hasWarehouseFallback = true;
+
                             const lineSubtotal = unitPrice;
-                            const lineGst = lineSubtotal * GST_RATE;
-                            const lineTotal = lineSubtotal + lineGst;
+                            const lineGst = roundMoney(lineSubtotal * GST_RATE);
+                            const lineTotal = roundMoney(lineSubtotal + lineGst);
                             subtotalAmount += lineSubtotal;
                             itemsGstAmount += lineGst;
 
@@ -911,7 +947,7 @@ exports.createOrder = async (req, res) => {
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                     estimate_id, destination_pincode, proposed_delivery_date, tracking_status
-                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, 'Assigned', $7, $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')`,
+                                 ) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, 18, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'Not Dispatched')`,
                                 [
                                     orderId,
                                     item.brand,
@@ -919,12 +955,13 @@ exports.createOrder = async (req, res) => {
                                     item.ram,
                                     item.storage,
                                     item.preferred_model,
+                                    itemStatus,
                                     inventoryId,
-                                    unitPrice,
-                                    lineGst,
-                                    lineTotal,
+                                    parseFloat(safeMoney(unitPrice)),
+                                    parseFloat(safeMoney(lineGst)),
+                                    parseFloat(safeMoney(lineTotal)),
                                     !!item.is_wfh,
-                                    perLaptopShipping,
+                                    parseFloat(safeMoney(perLaptopShipping)),
                                     item.delivery_mode,
                                     item.customer_address_id || null,
                                     item.delivery_contact_name || null,
@@ -937,12 +974,12 @@ exports.createOrder = async (req, res) => {
                                 ]
                             );
                         }
-                        assignments.push({ item, status: 'Assigned', quantity });
+                        assignments.push({ item, status: hasWarehouseFallback ? 'Warehouse Needed' : 'Assigned', quantity });
                     } else {
                         for (let index = 0; index < quantity; index++) {
                             const lineSubtotal = unitPrice;
-                            const lineGst = lineSubtotal * GST_RATE;
-                            const lineTotal = lineSubtotal + lineGst;
+                            const lineGst = roundMoney(lineSubtotal * GST_RATE);
+                            const lineTotal = roundMoney(lineSubtotal + lineGst);
                             subtotalAmount += lineSubtotal;
                             itemsGstAmount += lineGst;
 
@@ -961,11 +998,11 @@ exports.createOrder = async (req, res) => {
                                     item.ram,
                                     item.storage,
                                     item.preferred_model,
-                                    unitPrice,
-                                    lineGst,
-                                    lineTotal,
+                                    parseFloat(safeMoney(unitPrice)),
+                                    parseFloat(safeMoney(lineGst)),
+                                    parseFloat(safeMoney(lineTotal)),
                                     !!item.is_wfh,
-                                    perLaptopShipping,
+                                    parseFloat(safeMoney(perLaptopShipping)),
                                     item.delivery_mode,
                                     item.customer_address_id || null,
                                     item.delivery_contact_name || null,
@@ -990,16 +1027,21 @@ exports.createOrder = async (req, res) => {
 
         // Determine final order status based on assignments
         const hasProcurement = assignments.some(a => a.status === 'Procurement Needed');
+        const hasWarehouse = assignments.some(a => a.status === 'Warehouse Needed');
         const allAssigned = assignments.length > 0 && assignments.every(a => a.status === 'Assigned');
 
         let finalStatus = 'Procurement Pending'; // Default if items need procurement
         if (allAssigned) {
             finalStatus = 'QC Pending'; // All items assigned, ready for QC
+        } else if (hasWarehouse) {
+            finalStatus = 'Warehouse Pending'; // Cooling period items need warehouse to mark ready
+        } else if (hasProcurement) {
+            finalStatus = 'Procurement Pending';
         } else if (assignments.length === 0) {
             finalStatus = 'New Lead'; // No items yet
         }
 
-        const grandTotalAmount = subtotalAmount + itemsGstAmount + parsedSecurity + shippingChargeFromItems + shippingGstAmount;
+        const grandTotalAmount = roundMoney(subtotalAmount + itemsGstAmount + parsedSecurity + shippingChargeFromItems + shippingGstAmount);
 
         // Update order status + totals
         await client.query(
@@ -1010,7 +1052,7 @@ exports.createOrder = async (req, res) => {
                  shipping_gst_amount = $4,
                  grand_total_amount = $5
              WHERE order_id = $6`,
-            [finalStatus, subtotalAmount, itemsGstAmount, shippingGstAmount, grandTotalAmount, orderId]
+            [finalStatus, parseFloat(safeMoney(subtotalAmount)), parseFloat(safeMoney(itemsGstAmount)), parseFloat(safeMoney(shippingGstAmount)), parseFloat(safeMoney(grandTotalAmount)), orderId]
         );
         await logOrderStatusHistory(client, {
             orderId,
@@ -1024,8 +1066,8 @@ exports.createOrder = async (req, res) => {
         res.json({ success: true, order_id: orderId, status: finalStatus, assignments });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error(error);
-        res.status(500).json({ message: 'Failed to create order' });
+        console.error('createOrder error:', error);
+        res.status(500).json({ message: error.message || 'Failed to create order' });
     } finally {
         client.release();
     }

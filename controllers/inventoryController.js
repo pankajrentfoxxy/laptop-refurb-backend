@@ -26,7 +26,8 @@ const cleanCsvValue = (value) => {
     return String(value).trim();
 };
 
-const AVAILABLE_INVENTORY_CLAUSE = `stock_type = 'Ready' AND status IN ('Ready', 'In Stock')`;
+// Sales can order from Cooling Period or Ready (exclude In Repair, Reserved, Floor, Outward)
+const AVAILABLE_INVENTORY_CLAUSE = `(stock_type IN ('Cooling Period', 'Ready') AND status IN ('Ready', 'In Stock'))`;
 
 const pickCsvField = (row, keys) => {
     for (const key of keys) {
