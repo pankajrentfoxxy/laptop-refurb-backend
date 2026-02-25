@@ -17,7 +17,7 @@ exports.getWarehouseItems = async (req, res) => {
                 oi.status as item_status, oi.inventory_id,
                 i.machine_number, i.serial_number, i.stock_type,
                 o.status as order_status, o.customer_id,
-                c.name as customer_name, c.email as customer_email
+                c.name as customer_name, c.company_name, c.email as customer_email, c.gst_no
             FROM order_items oi
             LEFT JOIN inventory i ON oi.inventory_id = i.inventory_id
             JOIN orders o ON oi.order_id = o.order_id

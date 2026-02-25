@@ -1316,7 +1316,7 @@ exports.getOrderDetails = async (req, res) => {
     const { id } = req.params;
     try {
         const orderRes = await pool.query(`
-            SELECT o.*, c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
+            SELECT o.*, c.name as customer_name, c.company_name, c.email as customer_email, c.phone as customer_phone,
                    u.name as owner_name
             FROM orders o
             JOIN customers c ON o.customer_id = c.customer_id
