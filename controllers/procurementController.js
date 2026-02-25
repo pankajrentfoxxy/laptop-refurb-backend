@@ -13,7 +13,7 @@ exports.getRequests = async (req, res) => {
     try {
         const includeReceived = req.query.include_received === 'true';
         const result = await pool.query(`
-            SELECT pr.*, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name, c.company_name
+            SELECT pr.*, oi.order_id, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name, c.company_name
             FROM procurement_requests pr
             JOIN order_items oi ON pr.order_item_id = oi.item_id
             JOIN orders o ON oi.order_id = o.order_id
