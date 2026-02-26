@@ -1681,33 +1681,45 @@ exports.cancelOrder = async (req, res) => {
 
 exports.updateOrderItemPrice = async (req, res) => {
     const { id, item_id } = req.params;
-    const { unit_price } = req.body;
-    const parsedPrice = parseFloat(unit_price);
-    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+    const { unit_price, quantity: reqQuantity } = req.body;
+    const parsedPrice = unit_price !== undefined && unit_price !== null && unit_price !== ''
+        ? parseFloat(unit_price)
+        : null;
+    const parsedQty = reqQuantity !== undefined && reqQuantity !== null && reqQuantity !== ''
+        ? parseInt(reqQuantity, 10)
+        : null;
+    if (parsedPrice !== null && (!Number.isFinite(parsedPrice) || parsedPrice < 0)) {
         return res.status(400).json({ message: 'Valid unit price (rent) is required' });
+    }
+    if (parsedQty !== null && (!Number.isInteger(parsedQty) || parsedQty < 1)) {
+        return res.status(400).json({ message: 'Quantity must be a positive integer' });
     }
     try {
         const itemRes = await pool.query(
-            `SELECT quantity FROM order_items WHERE order_id = $1 AND item_id = $2`,
+            `SELECT unit_price, quantity FROM order_items WHERE order_id = $1 AND item_id = $2`,
             [id, item_id]
         );
         if (!itemRes.rows.length) return res.status(404).json({ message: 'Order item not found' });
-        const quantity = parseInt(itemRes.rows[0].quantity, 10) || 1;
-        const lineSubtotal = roundMoney(parsedPrice * quantity);
+        const currentPrice = parseFloat(itemRes.rows[0].unit_price) || 0;
+        const currentQty = parseInt(itemRes.rows[0].quantity, 10) || 1;
+        const nextPrice = parsedPrice !== null ? parsedPrice : currentPrice;
+        const nextQty = parsedQty !== null ? parsedQty : currentQty;
+        const lineSubtotal = roundMoney(nextPrice * nextQty);
         const lineGst = roundMoney(lineSubtotal * GST_RATE);
         const lineTotal = roundMoney(lineSubtotal + lineGst);
 
         await pool.query(
             `UPDATE order_items
-             SET unit_price = $1, gst_amount = $2, total_with_gst = $3
-             WHERE order_id = $4 AND item_id = $5`,
-            [parseFloat(safeMoney(parsedPrice)), parseFloat(safeMoney(lineGst)), parseFloat(safeMoney(lineTotal)), id, item_id]
+             SET unit_price = $1, quantity = $2, gst_amount = $3, total_with_gst = $4
+             WHERE order_id = $5 AND item_id = $6`,
+            [parseFloat(safeMoney(nextPrice)), nextQty, parseFloat(safeMoney(lineGst)), parseFloat(safeMoney(lineTotal)), id, item_id]
         );
         await recalculateOrderFinancials(pool, id);
-        res.json({ success: true, message: 'Rent price updated' });
+        const msg = [parsedPrice !== null && 'price', parsedQty !== null && 'quantity'].filter(Boolean).join(' and ');
+        res.json({ success: true, message: msg ? `${msg} updated` : 'Updated' });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: 'Failed to update rent price' });
+        res.status(500).json({ message: 'Failed to update order item' });
     }
 };
 

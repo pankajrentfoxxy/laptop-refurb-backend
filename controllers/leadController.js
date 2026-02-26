@@ -183,7 +183,12 @@ exports.getLeads = async (req, res) => {
     if (!include_duplicates || include_duplicates === 'false') {
       andConditions.push({ isDuplicate: false });
     }
-    if (status) andConditions.push({ status });
+    if (status) {
+      const statusList = Array.isArray(status) ? status : String(status).split(',').map((s) => s.trim()).filter(Boolean);
+      if (statusList.length > 0) {
+        andConditions.push({ status: { in: statusList } });
+      }
+    }
     if (source) andConditions.push({ source });
 
     if (req.user.role === 'sales') {
