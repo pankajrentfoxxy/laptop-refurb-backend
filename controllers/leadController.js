@@ -3,7 +3,7 @@ const csv = require('csv-parser');
 const crypto = require('crypto');
 const prisma = require('../prisma/client');
 const pool = require('../config/db');
-const { researchLeadCompany } = require('../services/perplexityService');
+const { ensureResearch } = require('../services/leadResearchService');
 const { getNextAutoAssignee, updateAutoAssignConfig } = require('../services/leadAutoAssignService');
 
 const LEAD_STATUSES = ['Pending', 'Cold', 'Warm', 'Hot', 'Gone', 'Hold', 'Rejected', 'Call Back', 'Deal'];
@@ -70,69 +70,6 @@ const buildLeadPayload = (row) => {
     city: normalizedCity || city || null,
     source: normalizedSource || source || null
   };
-};
-
-const ensureResearch = async (lead, options = {}) => {
-  const { force = false } = options;
-  if (!lead || lead.isDuplicate) return;
-
-  const existing = await prisma.leadCompanyResearch.findUnique({
-    where: { leadId: lead.leadId }
-  });
-  if (!force && (existing || lead.researchStatus === 'completed')) return;
-
-  const emailDomain = getDomainFromEmail(lead.email);
-  const companyName = (
-    (lead.companyName && lead.companyName.trim()) ||
-    (isLikelyCompanyDomain(emailDomain) ? emailDomain : null) ||
-    (lead.name && lead.name.trim()) ||
-    'Unknown Company'
-  );
-  const researchTarget = [companyName, lead.brand].filter(Boolean).join(' ').trim();
-  try {
-    const data = await researchLeadCompany(researchTarget || companyName);
-    await prisma.leadCompanyResearch.upsert({
-      where: { leadId: lead.leadId },
-      create: {
-        leadId: lead.leadId,
-        industry: data.industry,
-        pincode: data.pincode,
-        cin: data.cin,
-        entityType: data.entity_type,
-        roc: data.roc,
-        revenue: data.revenue,
-        employees: data.employees,
-        gst: data.gst,
-        address: data.address,
-        city: data.city,
-        state: data.state,
-        rawResponse: data
-      },
-      update: {
-        industry: data.industry,
-        pincode: data.pincode,
-        cin: data.cin,
-        entityType: data.entity_type,
-        roc: data.roc,
-        revenue: data.revenue,
-        employees: data.employees,
-        gst: data.gst,
-        address: data.address,
-        city: data.city,
-        state: data.state,
-        rawResponse: data
-      }
-    });
-    await prisma.lead.update({
-      where: { leadId: lead.leadId },
-      data: { researchStatus: 'completed', researchRequestedAt: new Date() }
-    });
-  } catch (error) {
-    await prisma.lead.update({
-      where: { leadId: lead.leadId },
-      data: { researchStatus: 'failed', researchRequestedAt: new Date() }
-    });
-  }
 };
 
 const formatHeadOfficeAddress = (research) => {
@@ -414,6 +351,9 @@ exports.createLead = async (req, res) => {
       }
     });
 
+    // Trigger research in background (don't block response)
+    ensureResearch(lead).catch((err) => console.error('Lead research error:', err));
+
     res.status(201).json({ success: true, lead });
   } catch (error) {
     console.error('Create lead error:', error);
@@ -464,7 +404,7 @@ exports.uploadLeadsCsv = async (req, res) => {
             ? { assignedUserId: autoAssignee, assignedById: req.user.user_id, assignedAt: new Date() }
             : {};
 
-          await prisma.lead.create({
+          const createdLead = await prisma.lead.create({
             data: {
               ...payload,
               status: 'Pending',
@@ -477,6 +417,9 @@ exports.uploadLeadsCsv = async (req, res) => {
 
           if (duplicateOf) duplicates += 1;
           created += 1;
+
+          // Trigger research in background
+          ensureResearch(createdLead).catch((err) => console.error('Lead research error:', err));
         } catch (error) {
           errors.push({ row, message: error.message });
         }

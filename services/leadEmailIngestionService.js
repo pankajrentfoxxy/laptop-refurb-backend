@@ -1,7 +1,9 @@
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const pool = require('../config/db');
+const prisma = require('../prisma/client');
 const { getNextAutoAssignee } = require('./leadAutoAssignService');
+const { ensureResearch } = require('./leadResearchService');
 
 const LEAD_EMAIL_POLL_INTERVAL_MS = parseInt(process.env.LEAD_EMAIL_POLL_INTERVAL_MS || '120000', 10);
 const LEAD_EMAIL_LOOKBACK_DAYS = parseInt(process.env.LEAD_EMAIL_LOOKBACK_DAYS || '14', 10);
@@ -396,7 +398,14 @@ const runLeadEmailSync = async () => {
                         });
                         await markMessageProcessed({ messageId, mailbox, subject, leadId });
                         if (beforeInsertLeadId) deduped++;
-                        else created++;
+                        else {
+                            created++;
+                            if (leadId) {
+                                prisma.lead.findUnique({ where: { leadId } })
+                                    .then((lead) => lead && ensureResearch(lead))
+                                    .catch((err) => console.error('Lead research error:', err));
+                            }
+                        }
                     } catch (messageError) {
                         console.error(`⚠️ Lead sync message skipped in "${mailbox}": ${messageError.message}`);
                         skipped++;

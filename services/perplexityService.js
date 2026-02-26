@@ -113,17 +113,25 @@ const researchLeadCompany = async (companyName) => {
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are a business analyst. Return accurate, best-effort structured company details from publicly available sources.'
+                        content: 'You are an expert business intelligence analyst specializing in Indian companies. Extract accurate, verifiable company information from official and authoritative sources. Prioritize: MCA/ROC filings, company website, LinkedIn, business directories (Tofler, ZaubaCorp), and news. For Indian companies: CIN format is L/F/G/U + 5 digits + year + state + 6 digits; GST is 15 digits; Pincode is 6 digits. Return only valid JSON, no markdown.'
                     },
                     {
                         role: 'user',
-                        content: `Research the company "${companyName}".
-Use this source priority:
-1) Official website and legal/company filings
-2) Official LinkedIn company page
-3) Trusted business databases and major publications
+                        content: `Research the company: "${companyName}"
 
-Return a single JSON object with these keys:
+Instructions:
+1. Search for the exact company name. If ambiguous, prefer the most prominent/registered business entity in India.
+2. Use official sources: MCA portal (mca.gov.in), company website, LinkedIn company page, GST portal, business registries.
+3. Extract real data. Use "Unknown" only when information is genuinely not found after searching.
+4. For India: CIN (e.g. L27100MH2020PLC123456), GST number (15 digits), ROC (Registrar of Companies), entity_type (Private Limited, LLP, etc.), pincode (6 digits).
+5. For address: use full registered/head office address when available.
+6. For revenue/employees: use latest available figures; specify currency (INR/USD) if known.
+7. departments: array of departments (e.g. ["Sales", "IT", "Operations"])
+8. technologies: array of tech stack if known
+9. summary: 2-3 sentence company overview
+10. URLs must be absolute (https://...)
+
+Return a single JSON object with these exact keys:
 - industry
 - pincode
 - cin
@@ -135,12 +143,12 @@ Return a single JSON object with these keys:
 - address
 - city
 - state
-- departments (array)
+- departments (array of strings)
 - website
 - linkedin_url
 - facebook_url
 - twitter_url
-- technologies (array)
+- technologies (array of strings)
 - annual_revenue
 - total_funding
 - latest_funding
@@ -148,10 +156,7 @@ Return a single JSON object with these keys:
 - subsidiary_of
 - summary
 
-Rules:
-- Provide best available value; use "Unknown" only when truly unavailable.
-- Keep URLs absolute.
-- Do not return markdown or explanation, only valid JSON.`
+Output only valid JSON, no other text.`
                     }
                 ],
                 response_format: {
