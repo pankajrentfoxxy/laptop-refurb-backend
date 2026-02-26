@@ -31,6 +31,10 @@ model Lead {
   leadId              Int                  @id @default(autoincrement()) @map("lead_id")
   name                String
   brand               String?
+  processor           String?
+  generation          String?
+  ram                 String?
+  storage             String?
   companyName         String?              @map("company_name")
   email               String?
   phone               String?

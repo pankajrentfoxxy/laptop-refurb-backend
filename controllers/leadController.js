@@ -604,7 +604,7 @@ exports.assignLeads = async (req, res) => {
 
 exports.updateLeadStatus = async (req, res) => {
   const { id } = req.params;
-  const { status, rejection_reason, notes } = req.body;
+  const { status, rejection_reason, notes, brand, processor, generation, ram, storage } = req.body;
 
   if (!LEAD_STATUSES.includes(status)) {
     return res.status(400).json({ success: false, message: 'Invalid lead status' });
@@ -621,11 +621,19 @@ exports.updateLeadStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
+    const configData = {};
+    if (brand !== undefined) configData.brand = String(brand || '').trim() || null;
+    if (processor !== undefined) configData.processor = String(processor || '').trim() || null;
+    if (generation !== undefined) configData.generation = String(generation || '').trim() || null;
+    if (ram !== undefined) configData.ram = String(ram || '').trim() || null;
+    if (storage !== undefined) configData.storage = String(storage || '').trim() || null;
+
     const updated = await prisma.lead.update({
       where: { leadId: lead.leadId },
       data: {
         status,
-        rejectionReason: status === 'Rejected' ? rejection_reason : null
+        rejectionReason: status === 'Rejected' ? rejection_reason : null,
+        ...configData
       }
     });
 
@@ -851,6 +859,10 @@ exports.updateLeadBasicDetails = async (req, res) => {
   const {
     name,
     brand,
+    processor,
+    generation,
+    ram,
+    storage,
     company_name,
     companyName,
     email,
@@ -870,6 +882,10 @@ exports.updateLeadBasicDetails = async (req, res) => {
     const normalizedPhone = normalizePhone(phone);
     const normalizedCity = city !== undefined ? String(city || '').trim() : undefined;
     const normalizedBrand = brand !== undefined ? String(brand || '').trim() : undefined;
+    const normalizedProcessor = processor !== undefined ? String(processor || '').trim() : undefined;
+    const normalizedGeneration = generation !== undefined ? String(generation || '').trim() : undefined;
+    const normalizedRam = ram !== undefined ? String(ram || '').trim() : undefined;
+    const normalizedStorage = storage !== undefined ? String(storage || '').trim() : undefined;
     const nextCompanyName = (company_name ?? companyName ?? existing.companyName ?? null);
 
     const updated = await prisma.lead.update({
@@ -877,6 +893,10 @@ exports.updateLeadBasicDetails = async (req, res) => {
       data: {
         name: (name ?? existing.name)?.trim() || existing.name,
         brand: normalizedBrand !== undefined ? (normalizedBrand || null) : existing.brand,
+        processor: normalizedProcessor !== undefined ? (normalizedProcessor || null) : existing.processor,
+        generation: normalizedGeneration !== undefined ? (normalizedGeneration || null) : existing.generation,
+        ram: normalizedRam !== undefined ? (normalizedRam || null) : existing.ram,
+        storage: normalizedStorage !== undefined ? (normalizedStorage || null) : existing.storage,
         companyName: nextCompanyName,
         email: normalizedEmail || null,
         phone: normalizedPhone || null,

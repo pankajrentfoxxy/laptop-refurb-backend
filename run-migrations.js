@@ -171,6 +171,15 @@ async function main() {
     CREATE INDEX IF NOT EXISTS idx_order_status_history_order ON order_status_history(order_id);
   `);
 
+  // Migration 018: Lead config (processor, generation, ram, storage)
+  await runMigration('018_lead_config', `
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS brand VARCHAR(100);
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS processor VARCHAR(100);
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS generation VARCHAR(50);
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS ram VARCHAR(50);
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS storage VARCHAR(100);
+  `);
+
   // Migration 009: Lead remarks
   await runMigration('009_lead_remarks', `
     CREATE TABLE IF NOT EXISTS lead_remarks (
