@@ -27,9 +27,19 @@ const {
     downloadInvoicePdf,
     downloadEwayPdf,
     cancelOrder,
+    updateOrderItemPrice,
     updateOrderItemLogistics,
     updateOrderItemTracking
 } = require('../controllers/salesController');
+
+// Admin-only middleware
+const requireAdmin = (req, res, next) => {
+    if (req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied: Admin only' });
+    }
+};
 
 // Sales access middleware
 const requireSalesAccess = (req, res, next) => {
@@ -142,6 +152,7 @@ router.get('/orders/pipeline-laptops', authMiddleware, requireDispatchAccess, ge
 router.get('/orders/:id', authMiddleware, getOrderDetails);
 router.put('/orders/:id/cancel', authMiddleware, requireSalesAccess, cancelOrder);
 router.put('/orders/:id/dispatch', authMiddleware, requireDispatchAccess, dispatchOrder);
+router.put('/orders/:id/items/:item_id/price', authMiddleware, requireAdmin, updateOrderItemPrice);
 router.put('/orders/:id/items/:item_id/logistics', authMiddleware, requireSalesAccess, updateOrderItemLogistics);
 router.put('/orders/:id/items/:item_id/tracking', authMiddleware, requireDispatchAccess, updateOrderItemTracking);
 router.put('/orders/:id/send-to-qc', authMiddleware, requireDispatchAccess, sendToQC);

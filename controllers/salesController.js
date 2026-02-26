@@ -1679,6 +1679,38 @@ exports.cancelOrder = async (req, res) => {
     }
 };
 
+exports.updateOrderItemPrice = async (req, res) => {
+    const { id, item_id } = req.params;
+    const { unit_price } = req.body;
+    const parsedPrice = parseFloat(unit_price);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        return res.status(400).json({ message: 'Valid unit price (rent) is required' });
+    }
+    try {
+        const itemRes = await pool.query(
+            `SELECT quantity FROM order_items WHERE order_id = $1 AND item_id = $2`,
+            [id, item_id]
+        );
+        if (!itemRes.rows.length) return res.status(404).json({ message: 'Order item not found' });
+        const quantity = parseInt(itemRes.rows[0].quantity, 10) || 1;
+        const lineSubtotal = roundMoney(parsedPrice * quantity);
+        const lineGst = roundMoney(lineSubtotal * GST_RATE);
+        const lineTotal = roundMoney(lineSubtotal + lineGst);
+
+        await pool.query(
+            `UPDATE order_items
+             SET unit_price = $1, gst_amount = $2, total_with_gst = $3
+             WHERE order_id = $4 AND item_id = $5`,
+            [parseFloat(safeMoney(parsedPrice)), parseFloat(safeMoney(lineGst)), parseFloat(safeMoney(lineTotal)), id, item_id]
+        );
+        await recalculateOrderFinancials(pool, id);
+        res.json({ success: true, message: 'Rent price updated' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to update rent price' });
+    }
+};
+
 exports.updateOrderItemLogistics = async (req, res) => {
     const { id, item_id } = req.params;
     const {
