@@ -28,6 +28,7 @@ const {
     downloadEwayPdf,
     cancelOrder,
     updateOrderItemPrice,
+    updateOrderCharges,
     updateOrderItemLogistics,
     updateOrderItemTracking
 } = require('../controllers/salesController');
@@ -77,9 +78,14 @@ const requireCustomersAccess = (req, res, next) => {
     }
 };
 
-// Customers edit profile (name, GST, company): admin or customers_edit
+// Customers edit profile (name, GST, company): admin, manager, sales, or customers_edit/sales_access
 const requireCustomersEdit = (req, res, next) => {
-    if (req.user.role === 'admin' || (req.user.permissions && req.user.permissions.includes('customers_edit'))) {
+    if (
+        req.user.role === 'admin' ||
+        req.user.role === 'manager' ||
+        req.user.role === 'sales' ||
+        (req.user.permissions && (req.user.permissions.includes('customers_edit') || req.user.permissions.includes('sales_access')))
+    ) {
         next();
     } else {
         res.status(403).json({ message: 'Access denied: Customers edit permission required' });
@@ -123,7 +129,12 @@ const upload = multer({
 });
 
 router.post('/customers', authMiddleware, (req, res, next) => {
-    if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_edit')))) {
+    if (
+        req.user.role === 'admin' ||
+        req.user.role === 'manager' ||
+        req.user.role === 'sales' ||
+        (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_edit')))
+    ) {
         next();
     } else {
         res.status(403).json({ message: 'Access denied' });
@@ -134,7 +145,12 @@ router.post('/customers/upload', authMiddleware, (req, res, next) => {
     next();
 }, upload.single('file'), uploadCustomersCsv);
 const requireCustomersOrSalesAccess = (req, res, next) => {
-    if (req.user.role === 'admin' || (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_access')))) {
+    if (
+        req.user.role === 'admin' ||
+        req.user.role === 'manager' ||
+        req.user.role === 'sales' ||
+        (req.user.permissions && (req.user.permissions.includes('sales_access') || req.user.permissions.includes('customers_access')))
+    ) {
         next();
     } else {
         res.status(403).json({ message: 'Access denied' });
@@ -152,7 +168,8 @@ router.get('/orders/pipeline-laptops', authMiddleware, requireDispatchAccess, ge
 router.get('/orders/:id', authMiddleware, getOrderDetails);
 router.put('/orders/:id/cancel', authMiddleware, requireSalesAccess, cancelOrder);
 router.put('/orders/:id/dispatch', authMiddleware, requireDispatchAccess, dispatchOrder);
-router.put('/orders/:id/items/:item_id/price', authMiddleware, requireAdmin, updateOrderItemPrice);
+router.put('/orders/:id/items/:item_id/price', authMiddleware, requireSalesAccess, updateOrderItemPrice);
+router.put('/orders/:id/charges', authMiddleware, requireSalesAccess, updateOrderCharges);
 router.put('/orders/:id/items/:item_id/logistics', authMiddleware, requireSalesAccess, updateOrderItemLogistics);
 router.put('/orders/:id/items/:item_id/tracking', authMiddleware, requireDispatchAccess, updateOrderItemTracking);
 router.put('/orders/:id/send-to-qc', authMiddleware, requireDispatchAccess, sendToQC);

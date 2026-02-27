@@ -1723,6 +1723,48 @@ exports.updateOrderItemPrice = async (req, res) => {
     }
 };
 
+exports.updateOrderCharges = async (req, res) => {
+    const { id } = req.params;
+    const { security_amount, lockin_period_days } = req.body;
+    try {
+        const orderRes = await pool.query(`SELECT order_id FROM orders WHERE order_id = $1`, [id]);
+        if (!orderRes.rows.length) return res.status(404).json({ message: 'Order not found' });
+
+        const updates = [];
+        const values = [];
+        let paramCount = 1;
+        if (security_amount !== undefined && security_amount !== null && security_amount !== '') {
+            const parsed = parseFloat(security_amount);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+                return res.status(400).json({ message: 'Security amount must be a non-negative number' });
+            }
+            updates.push(`security_amount = $${paramCount++}`);
+            values.push(parseFloat(safeMoney(parsed)));
+        }
+        if (lockin_period_days !== undefined && lockin_period_days !== null && lockin_period_days !== '') {
+            const parsed = parseInt(lockin_period_days, 10);
+            if (!Number.isInteger(parsed) || parsed < 0) {
+                return res.status(400).json({ message: 'Lock-in days must be a non-negative integer' });
+            }
+            updates.push(`lockin_period_days = $${paramCount++}`);
+            values.push(parsed);
+        }
+        if (updates.length === 0) {
+            return res.status(400).json({ message: 'Provide security_amount and/or lockin_period_days to update' });
+        }
+        values.push(id);
+        await pool.query(
+            `UPDATE orders SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE order_id = $${paramCount}`,
+            values
+        );
+        await recalculateOrderFinancials(pool, id);
+        res.json({ success: true, message: 'Security and lock-in updated' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to update order charges' });
+    }
+};
+
 exports.updateOrderItemLogistics = async (req, res) => {
     const { id, item_id } = req.params;
     const {
