@@ -30,7 +30,8 @@ model User {
 model Lead {
   leadId              Int                  @id @default(autoincrement()) @map("lead_id")
   name                String
-  brand               String?
+  companyBrand        String?              @map("company_brand")  // Lead's company brand name (e.g. Tata, Infosys)
+  brand               String?              // Laptop brand required (config: Dell, HP, etc.)
   processor           String?
   generation          String?
   ram                 String?
@@ -40,6 +41,7 @@ model Lead {
   phone               String?
   city                String?
   source              String?
+  personalRemarks     String?              @map("personal_remarks")
   status              String               @default("Pending")
   assignedUserId      Int?                 @map("assigned_user_id")
   assignedById        Int?                 @map("assigned_by")

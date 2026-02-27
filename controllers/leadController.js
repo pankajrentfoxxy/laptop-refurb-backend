@@ -63,6 +63,7 @@ const buildLeadPayload = (row) => {
 
   return {
     name: normalizedName || name || normalizedCompany || companyName || 'Unknown',
+    companyBrand: pickField(normalizedRow, ['company_brand', 'company_brand_name']) || pickField(row, ['company_brand', 'company_brand_name']) || null,
     brand: pickField(normalizedRow, ['brand']) || pickField(row, ['brand']) || null,
     companyName: normalizedCompany || companyName || null,
     email: normalizedEmail || email || null,
@@ -299,6 +300,14 @@ exports.getLeadById = async (req, res) => {
       (a) => a.action !== 'email_reingested'
     );
 
+    // Ensure personalRemarks is present (fallback if Prisma client is out of sync)
+    if (lead.personalRemarks === undefined && lead.personal_remarks === undefined) {
+      const prRes = await pool.query('SELECT personal_remarks FROM leads WHERE lead_id = $1', [lead.leadId]);
+      lead.personalRemarks = prRes.rows[0]?.personal_remarks ?? null;
+    } else if (lead.personalRemarks === undefined) {
+      lead.personalRemarks = lead.personal_remarks;
+    }
+
     res.json({ success: true, lead });
   } catch (error) {
     console.error('Get lead error:', error);
@@ -338,6 +347,7 @@ exports.createLead = async (req, res) => {
     const lead = await prisma.lead.create({
       data: {
         ...payload,
+        companyBrand: payload.companyBrand,
         brand: payload.brand,
         status: 'Pending',
         createdAt: new Date(),
@@ -806,16 +816,15 @@ exports.updateLeadBasicDetails = async (req, res) => {
   const { id } = req.params;
   const {
     name,
-    brand,
-    processor,
-    generation,
-    ram,
-    storage,
     company_name,
     companyName,
+    company_brand,
+    companyBrand,
     email,
     phone,
-    city
+    city,
+    personal_remarks,
+    personalRemarks
   } = req.body || {};
 
   try {
@@ -829,27 +838,34 @@ exports.updateLeadBasicDetails = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const normalizedPhone = normalizePhone(phone);
     const normalizedCity = city !== undefined ? String(city || '').trim() : undefined;
-    const normalizedBrand = brand !== undefined ? String(brand || '').trim() : undefined;
-    const normalizedProcessor = processor !== undefined ? String(processor || '').trim() : undefined;
-    const normalizedGeneration = generation !== undefined ? String(generation || '').trim() : undefined;
-    const normalizedRam = ram !== undefined ? String(ram || '').trim() : undefined;
-    const normalizedStorage = storage !== undefined ? String(storage || '').trim() : undefined;
     const nextCompanyName = (company_name ?? companyName ?? existing.companyName ?? null);
+    const nextCompanyBrand = (company_brand ?? companyBrand) !== undefined
+      ? String(company_brand ?? companyBrand ?? '').trim() || null
+      : undefined;
+    const nextPersonalRemarks = (personal_remarks ?? personalRemarks) !== undefined
+      ? String(personal_remarks ?? personalRemarks ?? '').trim() || null
+      : undefined;
 
-    const updated = await prisma.lead.update({
+    // Use raw SQL for full update to avoid Prisma client sync issues with company_brand
+    const nextName = (name ?? existing.name)?.trim() || existing.name;
+    const nextEmail = normalizedEmail !== undefined ? normalizedEmail : existing.email;
+    const nextPhone = normalizedPhone !== undefined ? normalizedPhone : existing.phone;
+    const nextCity = normalizedCity !== undefined ? (normalizedCity || null) : existing.city;
+    const nextPersonalRemarksVal = nextPersonalRemarks !== undefined ? nextPersonalRemarks : existing.personalRemarks;
+    const cbRes = await pool.query('SELECT company_brand FROM leads WHERE lead_id = $1', [leadId]);
+    const existingCompanyBrandVal = cbRes.rows[0]?.company_brand ?? null;
+    const nextCompanyBrandVal = nextCompanyBrand !== undefined ? nextCompanyBrand : existingCompanyBrandVal;
+
+    await pool.query(
+      `UPDATE leads SET
+        name = $1, company_name = $2, company_brand = $3, email = $4, phone = $5, city = $6, personal_remarks = $7, updated_at = NOW()
+       WHERE lead_id = $8`,
+      [nextName, nextCompanyName, nextCompanyBrandVal, nextEmail, nextPhone, nextCity, nextPersonalRemarksVal, leadId]
+    );
+
+    const updated = await prisma.lead.findUnique({
       where: { leadId },
-      data: {
-        name: (name ?? existing.name)?.trim() || existing.name,
-        brand: normalizedBrand !== undefined ? (normalizedBrand || null) : existing.brand,
-        processor: normalizedProcessor !== undefined ? (normalizedProcessor || null) : existing.processor,
-        generation: normalizedGeneration !== undefined ? (normalizedGeneration || null) : existing.generation,
-        ram: normalizedRam !== undefined ? (normalizedRam || null) : existing.ram,
-        storage: normalizedStorage !== undefined ? (normalizedStorage || null) : existing.storage,
-        companyName: nextCompanyName,
-        email: normalizedEmail || null,
-        phone: normalizedPhone || null,
-        city: normalizedCity !== undefined ? (normalizedCity || null) : existing.city
-      }
+      include: { assignedUser: { select: { userId: true, name: true, role: true } } }
     });
 
     await prisma.leadActivity.create({
@@ -862,20 +878,30 @@ exports.updateLeadBasicDetails = async (req, res) => {
     });
 
     const companyChanged = (existing.companyName || null) !== (nextCompanyName || null);
-    const brandChanged = (existing.brand || null) !== (normalizedBrand !== undefined ? (normalizedBrand || null) : (existing.brand || null));
-    if (companyChanged || brandChanged) {
+    const companyBrandChanged = nextCompanyBrand !== undefined && (existingCompanyBrandVal || null) !== (nextCompanyBrand || null);
+    if (companyChanged || companyBrandChanged) {
       await ensureResearch(updated, { force: true });
       await prisma.leadActivity.create({
         data: {
           leadId,
           userId: req.user.user_id,
           action: 'research_refreshed',
-          notes: `Research auto-refreshed after ${companyChanged ? 'company' : ''}${companyChanged && brandChanged ? ' and ' : ''}${brandChanged ? 'brand' : ''} update`
+          notes: `Research auto-refreshed after ${companyChanged ? 'company' : ''}${companyChanged && companyBrandChanged ? ' and ' : ''}${companyBrandChanged ? 'company brand' : ''} update`
         }
       });
     }
 
-    res.json({ success: true, lead: updated });
+    // Re-fetch to ensure we return fresh data including personalRemarks
+    const fresh = await prisma.lead.findUnique({
+      where: { leadId },
+      include: { assignedUser: { select: { userId: true, name: true, role: true } } }
+    });
+    const leadToReturn = fresh || updated;
+    if (leadToReturn && leadToReturn.companyBrand === undefined && leadToReturn.company_brand === undefined) {
+      const cbRes2 = await pool.query('SELECT company_brand FROM leads WHERE lead_id = $1', [leadId]);
+      leadToReturn.companyBrand = cbRes2.rows[0]?.company_brand ?? null;
+    }
+    res.json({ success: true, lead: leadToReturn });
   } catch (error) {
     console.error('Update lead basic details error:', error);
     res.status(500).json({ success: false, message: 'Server error updating lead details' });
