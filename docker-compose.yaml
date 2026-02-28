@@ -1,0 +1,76 @@
+# Deploy package - Backend repo with frontend clone
+# Hostinger expects docker-compose.yaml at repo root
+# Frontend: https://github.com/pankajrentfoxxy/laptop-refurb-frontend
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: laptop-erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.deploy
+    container_name: laptop-erp-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-postgres}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-postgres}
+      DB_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
+      ERP_BASE_URL: ${ERP_BASE_URL}
+      ERP_API_TOKEN: ${ERP_API_TOKEN}
+      ERP_SYNC_INTERVAL_MS: ${ERP_SYNC_INTERVAL_MS:-120000}
+      LEAD_EMAIL_IMAP_HOST: ${LEAD_EMAIL_IMAP_HOST}
+      LEAD_EMAIL_IMAP_PORT: ${LEAD_EMAIL_IMAP_PORT:-993}
+      LEAD_EMAIL_IMAP_SECURE: ${LEAD_EMAIL_IMAP_SECURE:-true}
+      LEAD_EMAIL_IMAP_USER: ${LEAD_EMAIL_IMAP_USER}
+      LEAD_EMAIL_IMAP_PASS: ${LEAD_EMAIL_IMAP_PASS}
+      LEAD_EMAIL_MAILBOXES: ${LEAD_EMAIL_MAILBOXES}
+      LEAD_EMAIL_POLL_INTERVAL_MS: ${LEAD_EMAIL_POLL_INTERVAL_MS:-10000}
+      LEAD_EMAIL_LOOKBACK_DAYS: ${LEAD_EMAIL_LOOKBACK_DAYS:-30}
+      LEAD_PERSONAL_EMAIL_DOMAINS: ${LEAD_PERSONAL_EMAIL_DOMAINS}
+    volumes:
+      - backend_uploads:/app/uploads
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web.deploy
+    container_name: laptop-erp-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  backend_uploads:
