@@ -18,6 +18,25 @@ const { authMiddleware } = require('../middleware/auth');
 // @access  Private (manager/admin/superadmin enforced in controller)
 router.post('/register', authMiddleware, register);
 
+// @route   GET /api/auth/debug
+// @desc    Debug connection (remove in production)
+// @access  Public
+router.get('/debug', async (req, res) => {
+  try {
+    const pool = require('../config/db');
+    await pool.query('SELECT 1');
+    const hasJwt = !!process.env.JWT_SECRET;
+    const userCount = await pool.query('SELECT COUNT(*) FROM public.users WHERE email = $1', ['admin@rentfoxxy.com']);
+    res.json({
+      db: 'ok',
+      jwtSecret: hasJwt ? 'set' : 'MISSING',
+      adminExists: parseInt(userCount.rows[0].count) > 0
+    });
+  } catch (err) {
+    res.status(500).json({ db: 'fail', error: err.message });
+  }
+});
+
 // @route   POST /api/auth/login
 // @desc    Login user
 // @access  Public

@@ -73,6 +73,25 @@ app.get('/health', (req, res) => {
   });
 });
 
+// API health with DB check
+app.get('/api/health', async (req, res) => {
+  try {
+    const pool = require('./config/db');
+    await pool.query('SELECT 1');
+    res.json({
+      success: true,
+      message: 'Server and database OK',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed',
+      error: process.env.NODE_ENV === 'production' ? undefined : err.message
+    });
+  }
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
