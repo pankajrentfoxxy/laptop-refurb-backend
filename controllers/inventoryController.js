@@ -295,7 +295,24 @@ exports.updateInventory = async (req, res) => {
 };
 
 // Trigger full ERP sync (Admin/Manager only)
+// ?async=1 returns immediately and runs sync in background (avoids 504 timeout)
 exports.triggerErpSync = async (req, res) => {
+    const runAsync = req.query.async === '1' || req.query.async === 'true';
+
+    if (runAsync) {
+        syncInventoryFromErp()
+            .then((result) => {
+                console.log('ERP inventory sync completed:', result);
+            })
+            .catch((err) => {
+                console.error('ERP sync failed:', err);
+            });
+        return res.json({
+            success: true,
+            message: 'ERP sync started in background. Check server logs for result.'
+        });
+    }
+
     try {
         const result = await syncInventoryFromErp();
         res.json({
