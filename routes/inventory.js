@@ -3,6 +3,7 @@ const router = express.Router();
 const { authMiddleware, checkRole } = require('../middleware/auth');
 const {
     addInventory,
+    updateInventory,
     getInventory,
     searchByMachineOrSerial,
     uploadBulk,
@@ -36,6 +37,9 @@ router.get('/search', searchByMachineOrSerial);
 
 // Add inventory (Warehouse & Admin only)
 router.post('/', checkRole('admin', 'manager', 'team_member'), addInventory);
+
+// Update inventory by machine_number or inventory_id
+router.put('/:identifier', checkRole('admin', 'manager', 'team_member'), updateInventory);
 
 // Bulk Upload
 router.post('/upload', checkRole('admin', 'manager', 'floor_manager'), upload.single('file'), uploadBulk);

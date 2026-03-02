@@ -218,6 +218,81 @@ exports.getLaptopCatalogOptions = async (req, res) => {
     }
 };
 
+// Update Inventory Item by machine_number or inventory_id
+exports.updateInventory = async (req, res) => {
+    const { identifier } = req.params;
+    const {
+        stock_type, device_type, machine_number, serial_number,
+        brand, model, processor, generation, ram, storage, gpu, screen_size, grade, status
+    } = req.body;
+
+    try {
+        const isNumeric = /^\d+$/.test(identifier);
+        const whereClause = isNumeric
+            ? 'inventory_id = $1'
+            : 'machine_number = $1 OR serial_number = $1';
+
+        const existing = await pool.query(
+            `SELECT inventory_id FROM inventory WHERE ${whereClause}`,
+            [identifier]
+        );
+
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Inventory item not found' });
+        }
+
+        const invId = existing.rows[0].inventory_id;
+
+        const updates = [];
+        const values = [];
+        let idx = 1;
+
+        const setIf = (col, val) => {
+            if (val !== undefined && val !== null) {
+                updates.push(`${col} = $${idx}`);
+                values.push(val);
+                idx++;
+            }
+        };
+
+        setIf('stock_type', stock_type);
+        setIf('device_type', device_type);
+        setIf('machine_number', machine_number);
+        setIf('serial_number', serial_number);
+        setIf('brand', brand);
+        setIf('model', model);
+        setIf('processor', processor);
+        setIf('generation', generation);
+        setIf('ram', ram);
+        setIf('storage', storage);
+        setIf('gpu', gpu);
+        setIf('screen_size', screen_size);
+        setIf('grade', grade);
+        setIf('status', status);
+
+        if (updates.length === 0) {
+            return res.status(400).json({ success: false, message: 'No fields to update' });
+        }
+
+        updates.push(`updated_at = CURRENT_TIMESTAMP`);
+        values.push(invId);
+
+        const result = await pool.query(
+            `UPDATE inventory SET ${updates.join(', ')} WHERE inventory_id = $${idx} RETURNING *`,
+            values
+        );
+
+        res.json({
+            success: true,
+            message: 'Inventory item updated successfully',
+            item: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Update inventory error:', error);
+        res.status(500).json({ success: false, message: 'Server error updating inventory' });
+    }
+};
+
 // Add Inventory Item
 exports.addInventory = async (req, res) => {
     const {
