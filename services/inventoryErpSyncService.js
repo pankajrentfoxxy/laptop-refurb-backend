@@ -93,9 +93,17 @@ const fetchPurchaseOrders = async () => fetchAllPages('/purchase-order-list');
 const buildPurchaseOrderMap = (purchaseOrders) => {
     const map = new Map();
     for (const record of purchaseOrders) {
-        const id = pickFirst(record, ['id', 'purchase_order_id', 'qc_order_id', 'qc_id', 'order_id']);
-        if (!id) continue;
-        map.set(id, record);
+        const ids = [
+            pickFirst(record, ['id', 'purchase_order_id', 'qc_order_id', 'qc_id', 'order_id']),
+            record.qc_order_id,
+            record.qc_id,
+            record.purchase_order_id,
+            record.order_id,
+            record.id
+        ].filter((v) => v !== undefined && v !== null && v !== '');
+        for (const id of [...new Set(ids.map((v) => String(v)))]) {
+            if (!map.has(id)) map.set(id, record);
+        }
     }
     return map;
 };
@@ -130,15 +138,48 @@ const parseAssetsDetails = (raw) => {
     };
 };
 
+const productIdsMatch = (product, qcRecord) => {
+    const qcIds = [
+        normalizeText(qcRecord.product_id),
+        normalizeText(qcRecord.product_details_id)
+    ].filter(Boolean);
+    const productIds = [
+        normalizeText(product.id),
+        normalizeText(product.product_id),
+        normalizeText(product.product_details_id),
+        normalizeText(product.item_id)
+    ].filter(Boolean);
+    return qcIds.some((q) => productIds.some((p) => String(q) === String(p)));
+};
+
+const productMatchesMachine = (product, machineNumber) => {
+    const mn = normalizeText(machineNumber);
+    if (!mn) return false;
+    return (
+        normalizeText(product.unique_product_serial) === mn ||
+        normalizeText(product.machine_number) === mn ||
+        normalizeText(product.machineNumber) === mn ||
+        normalizeText(product.serial_number) === mn ||
+        normalizeText(product.serialNumber) === mn
+    );
+};
+
 const resolvePurchaseDetailsForQc = (qcRecord, purchaseRecord) => {
     if (!purchaseRecord) return { ...qcRecord };
 
     const products = Array.isArray(purchaseRecord.product_details) ? purchaseRecord.product_details : [];
-    const matchedProduct =
-        products.find((product) => normalizeText(product.id) === normalizeText(qcRecord.product_id)) ||
-        products.find((product) => normalizeText(product.id) === normalizeText(qcRecord.product_details_id)) ||
-        products[0] ||
-        {};
+    const machineNumber = pickFirst(qcRecord, ['unique_product_serial', 'machine_number', 'machineNumber']);
+
+    let matchedProduct = products.find((p) => productIdsMatch(p, qcRecord));
+    if (!matchedProduct && machineNumber) {
+        matchedProduct = products.find((p) => productMatchesMachine(p, machineNumber));
+    }
+    if (!matchedProduct && products.length === 1) {
+        matchedProduct = products[0];
+    }
+    if (!matchedProduct) {
+        matchedProduct = {};
+    }
 
     const assets = parseAssetsDetails(purchaseRecord.assets_details);
 
