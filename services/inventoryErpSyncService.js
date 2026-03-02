@@ -248,7 +248,7 @@ const upsertInventoryFromErpRecord = async ({ machineNumber, serialNumber, detai
 const syncInventoryFromErp = async () => {
     if (!ERP_TOKEN) {
         console.warn('⚠️ ERP inventory sync skipped: ERP_API_TOKEN is missing');
-        return;
+        return { inserted: 0, updated: 0, skipped: 0, total: 0, error: 'ERP_API_TOKEN is missing' };
     }
 
     const qcPassedRecords = await fetchQCPassedOrders();
@@ -286,6 +286,7 @@ const syncInventoryFromErp = async () => {
     if (process.env.NODE_ENV !== 'production') {
         console.log(`ERP inventory sync: inserted=${inserted}, updated=${updated}, skipped=${skipped}`);
     }
+    return { inserted, updated, skipped, total: qcPassedRecords.length };
 };
 
 const ensureInventoryColumns = async () => {

@@ -4,6 +4,7 @@ const { authMiddleware, checkRole } = require('../middleware/auth');
 const {
     addInventory,
     updateInventory,
+    triggerErpSync,
     getInventory,
     searchByMachineOrSerial,
     uploadBulk,
@@ -40,6 +41,9 @@ router.post('/', checkRole('admin', 'manager', 'team_member'), addInventory);
 
 // Update inventory by machine_number or inventory_id
 router.put('/:identifier', checkRole('admin', 'manager', 'team_member'), updateInventory);
+
+// Trigger full ERP sync (corrects all records from QC Passed + Purchase Order)
+router.post('/sync', checkRole('admin', 'manager'), triggerErpSync);
 
 // Bulk Upload
 router.post('/upload', checkRole('admin', 'manager', 'floor_manager'), upload.single('file'), uploadBulk);

@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const csv = require('csv-parser');
 const fs = require('fs');
+const { syncInventoryFromErp } = require('../services/inventoryErpSyncService');
 
 const ensureLaptopCatalogTable = async () => {
     await pool.query(`
@@ -290,6 +291,25 @@ exports.updateInventory = async (req, res) => {
     } catch (error) {
         console.error('Update inventory error:', error);
         res.status(500).json({ success: false, message: 'Server error updating inventory' });
+    }
+};
+
+// Trigger full ERP sync (Admin/Manager only)
+exports.triggerErpSync = async (req, res) => {
+    try {
+        const result = await syncInventoryFromErp();
+        res.json({
+            success: true,
+            message: 'ERP inventory sync completed',
+            ...result
+        });
+    } catch (error) {
+        console.error('ERP sync trigger error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'ERP sync failed',
+            error: error.message
+        });
     }
 };
 
