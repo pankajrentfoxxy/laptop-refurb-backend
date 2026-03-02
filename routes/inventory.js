@@ -9,11 +9,15 @@ const {
     getSpecs,
     searchAvailableInventory,
     uploadLaptopCatalogCsv,
-    getLaptopCatalogOptions
+    getLaptopCatalogOptions,
+    traceMachineNumber
 } = require('../controllers/inventoryController');
 
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
+
+// Debug: trace model/source for a machine number (ERP sync investigation)
+router.get('/trace/:machineNumber', authMiddleware, traceMachineNumber);
 
 router.use(authMiddleware);
 

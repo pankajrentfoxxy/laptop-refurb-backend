@@ -433,3 +433,48 @@ exports.searchAvailableInventory = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error searching inventory' });
     }
 };
+
+/**
+ * Trace model/source for a machine number - ERP sync investigation
+ * GET /api/inventory/trace/:machineNumber
+ */
+exports.traceMachineNumber = async (req, res) => {
+    try {
+        const { machineNumber } = req.params;
+        if (!machineNumber) {
+            return res.status(400).json({ success: false, message: 'machineNumber required' });
+        }
+
+        const { traceMachineNumberFromErp } = require('../services/inventoryErpSyncService');
+
+        const invRes = await pool.query(
+            `SELECT inventory_id, machine_number, serial_number, brand, model, processor, generation, ram, storage, gpu, screen_size, status, stock_type, created_at, updated_at
+             FROM inventory
+             WHERE machine_number = $1 OR serial_number = $1
+             LIMIT 1`,
+            [machineNumber.trim()]
+        );
+
+        const inventoryRecord = invRes.rows[0] || null;
+        const erpTrace = await traceMachineNumberFromErp(machineNumber);
+
+        res.json({
+            success: true,
+            machineNumber: machineNumber.trim(),
+            inventory: inventoryRecord ? {
+                model: inventoryRecord.model,
+                brand: inventoryRecord.brand,
+                processor: inventoryRecord.processor,
+                ram: inventoryRecord.ram,
+                storage: inventoryRecord.storage,
+                serial_number: inventoryRecord.serial_number,
+                status: inventoryRecord.status,
+                updated_at: inventoryRecord.updated_at
+            } : null,
+            erpTrace
+        });
+    } catch (error) {
+        console.error('Trace machine number error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

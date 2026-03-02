@@ -269,7 +269,62 @@ const startInventorySyncWorker = async () => {
     }
 };
 
+const traceMachineNumberFromErp = async (machineNumber) => {
+    if (!ERP_TOKEN) return { error: 'ERP_API_TOKEN is missing' };
+
+    const qcPassedRecords = await fetchQCPassedOrders();
+    const purchaseOrderRecords = await fetchPurchaseOrders();
+    const purchaseOrderMap = buildPurchaseOrderMap(purchaseOrderRecords);
+
+    const mn = String(machineNumber || '').trim();
+    const qcRecord = qcPassedRecords.find(
+        (r) => normalizeText(r.unique_product_serial) === mn ||
+              normalizeText(r.machine_number) === mn ||
+              normalizeText(r.machineNumber) === mn
+    );
+
+    if (!qcRecord) {
+        return { found: false, message: `Machine number ${mn} not found in ERP QC Passed` };
+    }
+
+    const poId = pickFirst(qcRecord, ['po_id', 'purchase_order_id']);
+    const productId = pickFirst(qcRecord, ['product_id', 'product_details_id']);
+    const purchaseDetails = purchaseOrderMap.get(poId) || purchaseOrderMap.get(pickFirst(qcRecord, ['id', 'qc_order_id'])) || {};
+    const mergedDetails = resolvePurchaseDetailsForQc(qcRecord, purchaseDetails);
+
+    const products = Array.isArray(purchaseDetails.product_details) ? purchaseDetails.product_details : [];
+    const matchedProduct = products.find((p) => normalizeText(p.id) === normalizeText(productId)) ||
+        products.find((p) => normalizeText(p.id) === normalizeText(qcRecord.product_details_id)) ||
+        products[0] || {};
+
+    return {
+        found: true,
+        machineNumber: mn,
+        qcRecord: {
+            product_id: productId,
+            po_id: poId,
+            serial_number: pickFirst(qcRecord, ['serial_number', 'serialNo']),
+            model: pickFirst(qcRecord, ['model', 'Model']),
+            brand: pickFirst(qcRecord, ['brand', 'Brand'])
+        },
+        purchaseOrder: {
+            id: poId,
+            product_details_count: products.length,
+            matched_product: matchedProduct,
+            assets_details: purchaseDetails.assets_details
+        },
+        mergedDetails: {
+            model: pickFirst(mergedDetails, ['model', 'Model']),
+            brand: pickFirst(mergedDetails, ['brand', 'Brand']),
+            processor: pickFirst(mergedDetails, ['processor', 'Processor']),
+            ram: pickFirst(mergedDetails, ['ram', 'RAM']),
+            storage: pickFirst(mergedDetails, ['storage', 'Storage'])
+        }
+    };
+};
+
 module.exports = {
     startInventorySyncWorker,
-    syncInventoryFromErp
+    syncInventoryFromErp,
+    traceMachineNumberFromErp
 };
