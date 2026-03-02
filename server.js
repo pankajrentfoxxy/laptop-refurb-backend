@@ -13,14 +13,18 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5001',
-  'https://rentfoxxy.vercel.app'
+  'https://rentfoxxy.vercel.app',
+  'http://187.77.187.213',
+  'https://187.77.187.213',
+  'http://crm.rentfoxxy.com',
+  'https://crm.rentfoxxy.com'
 ];
 
 if (process.env.FRONTEND_URL) {
   try {
-    // Remove trailing slash if present
-    const url = process.env.FRONTEND_URL.replace(/\/$/, '');
-    allowedOrigins.push(url);
+    // Support comma-separated URLs
+    const urls = process.env.FRONTEND_URL.split(',').map((u) => u.trim().replace(/\/$/, '')).filter(Boolean);
+    urls.forEach((url) => url && !allowedOrigins.includes(url) && allowedOrigins.push(url));
   } catch (e) {
     console.error('Invalid FRONTEND_URL:', e);
   }
