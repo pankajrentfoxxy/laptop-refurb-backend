@@ -68,6 +68,8 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    volumes:
+      - /var/www/certbot:/var/www/certbot
     depends_on:
       - backend
 

@@ -1,0 +1,15 @@
+# SSL override - use with: docker compose -f docker-compose.yaml -f docker-compose.ssl.yml up -d
+# Run setup-ssl.ps1 first to obtain the certificate.
+
+version: '3.8'
+
+services:
+  web:
+    build:
+      dockerfile: Dockerfile.web.ssl.deploy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/www/certbot:/var/www/certbot
+      - /etc/letsencrypt:/etc/letsencrypt:ro
