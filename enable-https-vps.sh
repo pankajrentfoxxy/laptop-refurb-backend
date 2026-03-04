@@ -28,9 +28,9 @@ echo "Stopping laptop-erp-web..."
 docker stop laptop-erp-web
 docker rm laptop-erp-web 2>/dev/null || true
 
-# Build SSL web image
-echo "Building SSL web image (this may take a few minutes)..."
-docker build -f Dockerfile.web.ssl.deploy -t laptop-erp-web:ssl .
+# Build SSL web image (--no-cache ensures latest frontend from GitHub)
+echo "Building SSL web image (this may take 3-5 minutes)..."
+docker build --no-cache -f Dockerfile.web.ssl.deploy -t laptop-erp-web:ssl .
 
 # Run new web container with SSL
 echo "Starting web container with HTTPS..."
