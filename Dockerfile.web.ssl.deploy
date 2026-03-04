@@ -3,7 +3,8 @@ FROM node:20-alpine
 RUN apk add --no-cache git
 
 WORKDIR /app
-RUN git clone https://github.com/pankajrentfoxxy/laptop-refurb-frontend.git .
+ARG CACHEBUST=1
+RUN git clone -b main --depth 1 https://github.com/pankajrentfoxxy/laptop-refurb-frontend.git . && echo "Build: $CACHEBUST"
 
 ARG REACT_APP_API_URL=/api
 ENV REACT_APP_API_URL=${REACT_APP_API_URL}
