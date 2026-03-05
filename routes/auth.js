@@ -8,6 +8,7 @@ const {
   loginBarcode,
   updateBarcode,
   updateMobile,
+  updateUserTeams,
   updateUserPermissions,
   deleteUser
 } = require('../controllers/authController');
@@ -61,6 +62,11 @@ router.put('/users/:id/barcode', authMiddleware, updateBarcode);
 // @desc    Update user mobile number
 // @access  Private (Admin/Manager)
 router.put('/users/:id/mobile', authMiddleware, updateMobile);
+
+// @route   PUT /api/auth/users/:id/teams
+// @desc    Update user team assignments (multi-team for team_member/team_lead)
+// @access  Private (Admin/Manager)
+router.put('/users/:id/teams', authMiddleware, updateUserTeams);
 
 // @route   GET /api/auth/users
 // @desc    Get all users (Manager/Admin)

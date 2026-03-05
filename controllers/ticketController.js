@@ -153,11 +153,13 @@ exports.getTickets = async (req, res) => {
     }
 
     // Role-based visibility
-    // Admin, Floor Manager, Manager: View All (unless specific filter applied)
     const privilegedRoles = ['admin', 'floor_manager', 'manager'];
+    const userTeamIds = req.user.team_ids && req.user.team_ids.length > 0
+      ? req.user.team_ids
+      : (req.user.team_id != null ? [req.user.team_id] : []);
 
     if (!privilegedRoles.includes(req.user.role)) {
-      // Regular users: See tickets assigned to ME or Unassigned tickets in MY TEAM
+      // Regular users: See tickets assigned to ME or Unassigned in ANY of MY TEAMS
       if (!team_id) {
         if (isProcurementTeam) {
           query += ` AND (
@@ -170,6 +172,14 @@ exports.getTickets = async (req, res) => {
           )`;
           params.push(req.user.user_id);
           params.push(req.user.team_id);
+          paramCount += 2;
+        } else if (userTeamIds.length > 0) {
+          query += ` AND (
+            t.assigned_user_id = $${paramCount}
+            OR (t.assigned_team_id = ANY($${paramCount + 1}::int[]) AND t.assigned_user_id IS NULL)
+          )`;
+          params.push(req.user.user_id);
+          params.push(userTeamIds);
           paramCount += 2;
         } else {
           query += ` AND (t.assigned_user_id = $${paramCount} OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL))`;
@@ -220,7 +230,7 @@ exports.getAllStages = async (req, res) => {
   }
 };
 
-// Get My Tickets (assigned to user or their team)
+// Get My Tickets (assigned to user or any of their teams)
 exports.getMyTickets = async (req, res) => {
   try {
     let query = `
@@ -235,11 +245,18 @@ exports.getMyTickets = async (req, res) => {
     `;
 
     const params = [];
+    const userTeamIds = req.user.team_ids && req.user.team_ids.length > 0
+      ? req.user.team_ids
+      : (req.user.team_id != null ? [req.user.team_id] : []);
 
-    // If not admin, filter by user or team
     if (req.user.role !== 'admin') {
-      query += ` WHERE t.assigned_user_id = $1 OR t.assigned_team_id = $2`;
-      params.push(req.user.user_id, req.user.team_id);
+      if (userTeamIds.length > 0) {
+        query += ` WHERE t.assigned_user_id = $1 OR t.assigned_team_id = ANY($2::int[])`;
+        params.push(req.user.user_id, userTeamIds);
+      } else {
+        query += ` WHERE t.assigned_user_id = $1 OR t.assigned_team_id = $2`;
+        params.push(req.user.user_id, req.user.team_id);
+      }
     }
 
     query += ` ORDER BY t.created_at DESC`;
@@ -682,10 +699,11 @@ exports.assignTicket = async (req, res) => {
 exports.claimTicket = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.user_id;
-  const userTeamId = req.user.team_id;
+  const userTeamIds = req.user.team_ids && req.user.team_ids.length > 0
+    ? req.user.team_ids
+    : (req.user.team_id != null ? [req.user.team_id] : []);
 
   try {
-    // Check if ticket exists, is assigned to user's team, and currently unassigned
     const ticketCheck = await pool.query(
       `SELECT * FROM tickets WHERE ticket_id = $1`,
       [id]
@@ -697,8 +715,11 @@ exports.claimTicket = async (req, res) => {
 
     const ticket = ticketCheck.rows[0];
 
-    // Validation
-    if (ticket.assigned_team_id !== userTeamId && req.user.role !== 'admin' && req.user.role !== 'floor_manager') {
+    const ticketTeamId = parseInt(ticket.assigned_team_id, 10);
+    const canClaim = req.user.role === 'admin' || req.user.role === 'floor_manager'
+      || (userTeamIds.length > 0 && userTeamIds.includes(ticketTeamId));
+
+    if (!canClaim) {
       return res.status(403).json({ success: false, message: 'Ticket is not assigned to your team' });
     }
 
@@ -761,8 +782,9 @@ exports.updateGrade = async (req, res) => {
 
     const ticket = ticketResult.rows[0];
 
-    // Authorization: Check if user is in Grading Team (9) or Admin/Floor Manager
-    if (req.user.team_id !== 9 && req.user.role !== 'admin' && req.user.role !== 'floor_manager') {
+    const userTeamIds = req.user.team_ids || (req.user.team_id != null ? [req.user.team_id] : []);
+    const isGradingTeam = userTeamIds.includes(9);
+    if (!isGradingTeam && req.user.role !== 'admin' && req.user.role !== 'floor_manager') {
       return res.status(403).json({ success: false, message: 'Only Grading Team can update grades' });
     }
 
