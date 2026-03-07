@@ -20,6 +20,7 @@ const {
     dispatchOrder,
     sendToQC,
     qcPassOrder,
+    qcPassOrderItem,
     markDelivered,
     generateInvoice,
     generateEwayBill,
@@ -174,6 +175,7 @@ router.put('/orders/:id/items/:item_id/logistics', authMiddleware, requireSalesA
 router.put('/orders/:id/items/:item_id/tracking', authMiddleware, requireDispatchAccess, updateOrderItemTracking);
 router.put('/orders/:id/send-to-qc', authMiddleware, requireDispatchAccess, sendToQC);
 router.put('/orders/:id/qc-pass', authMiddleware, requireQCAccess, qcPassOrder);
+router.put('/orders/:id/items/:item_id/qc-pass', authMiddleware, requireQCAccess, qcPassOrderItem);
 router.put('/orders/:id/delivered', authMiddleware, requireDispatchAccess, markDelivered);
 router.post('/orders/:id/qc-note', authMiddleware, requireQCAccess, addQCNote);
 router.post('/orders/:id/generate-invoice', authMiddleware, requireDispatchAccess, generateInvoice);

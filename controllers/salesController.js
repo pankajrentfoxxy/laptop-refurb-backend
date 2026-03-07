@@ -846,8 +846,8 @@ exports.createOrder = async (req, res) => {
                         const lineSubtotal = unitPrice;
                         const lineGst = roundMoney(lineSubtotal * GST_RATE);
                         const lineTotal = roundMoney(lineSubtotal + lineGst);
-                        subtotalAmount += lineSubtotal;
-                        itemsGstAmount += lineGst;
+                subtotalAmount += lineSubtotal;
+                itemsGstAmount += lineGst;
 
                         let itemStatus = 'Assigned';
                         if (invId) {
@@ -869,10 +869,10 @@ exports.createOrder = async (req, res) => {
                                 allAssigned = false;
                             }
                             consumedInventoryIds.add(invId);
-                            await client.query(`UPDATE inventory SET status = 'Reserved' WHERE inventory_id = $1`, [invId]);
-                        }
+                        await client.query(`UPDATE inventory SET status = 'Reserved' WHERE inventory_id = $1`, [invId]);
+                    }
 
-                        await client.query(
+                    await client.query(
                             `INSERT INTO order_items (
                                 order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status, inventory_id,
                                 unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
@@ -942,7 +942,7 @@ exports.createOrder = async (req, res) => {
 
                             await client.query(`UPDATE inventory SET status = 'Reserved' WHERE inventory_id = $1`, [inventoryId]);
                             consumedInventoryIds.add(inventoryId);
-                            await client.query(
+                        await client.query(
                                 `INSERT INTO order_items (
                                     order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status, inventory_id,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
@@ -985,14 +985,14 @@ exports.createOrder = async (req, res) => {
                             subtotalAmount += lineSubtotal;
                             itemsGstAmount += lineGst;
 
-                            const itemRes = await client.query(
+                        const itemRes = await client.query(
                                 `INSERT INTO order_items (
                                     order_id, brand, processor, generation, ram, storage, quantity, preferred_model, status,
                                     unit_price, gst_percent, gst_amount, total_with_gst, is_wfh, shipping_charge,
                                     delivery_mode, customer_address_id, delivery_contact_name, delivery_contact_phone, delivery_address, delivery_pincode,
                                     estimate_id, destination_pincode, proposed_delivery_date, tracking_status
                                  ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'Procurement', $8, 18, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Not Dispatched')
-                                 RETURNING item_id`,
+                             RETURNING item_id`,
                                 [
                                     orderId,
                                     item.brand,
@@ -1016,11 +1016,11 @@ exports.createOrder = async (req, res) => {
                                     null,
                                     item.proposed_delivery_date || null
                                 ]
-                            );
-                            await client.query(
-                                `INSERT INTO procurement_requests (order_item_id, status) VALUES ($1, 'New')`,
-                                [itemRes.rows[0].item_id]
-                            );
+                        );
+                        await client.query(
+                            `INSERT INTO procurement_requests (order_item_id, status) VALUES ($1, 'New')`,
+                            [itemRes.rows[0].item_id]
+                        );
                         }
                         assignments.push({ item, status: 'Procurement Needed', quantity });
                     }
@@ -1158,7 +1158,8 @@ exports.getOrders = async (req, res) => {
                 COALESCE(SUM(oi.unit_price * oi.quantity), 0) as total_value,
                 COALESCE(SUM(CASE WHEN oi.tracking_status = 'Delivered' THEN oi.quantity ELSE 0 END), 0) AS delivered_laptops,
                 COALESCE(SUM(CASE WHEN oi.tracking_status = 'On The Way' THEN oi.quantity ELSE 0 END), 0) AS on_the_way_laptops,
-                COALESCE(SUM(CASE WHEN oi.tracking_status = 'Not Dispatched' THEN oi.quantity ELSE 0 END), 0) AS not_dispatched_laptops
+                COALESCE(SUM(CASE WHEN oi.tracking_status = 'Not Dispatched' THEN oi.quantity ELSE 0 END), 0) AS not_dispatched_laptops,
+                COALESCE(SUM(CASE WHEN (oi.qc_passed = true OR o.status = 'QC Passed') AND oi.tracking_status = 'Not Dispatched' THEN oi.quantity ELSE 0 END), 0) AS ready_for_dispatch_count
             FROM orders o
             JOIN customers c ON o.customer_id = c.customer_id
             LEFT JOIN users u ON o.owner_user_id = u.user_id
@@ -1236,6 +1237,7 @@ exports.getPipelineLaptops = async (req, res) => {
                 i.serial_number,
                 oi.status AS item_status,
                 oi.tracking_status,
+                COALESCE(oi.qc_passed, false) AS qc_passed,
                 c.company_name
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.order_id
@@ -1435,13 +1437,19 @@ exports.dispatchOrder = async (req, res) => {
         if (!fromStatus) {
             return res.status(404).json({ message: 'Order not found' });
         }
-        if (!['QC Passed', 'Dispatched'].includes(fromStatus)) {
-            return res.status(400).json({ message: 'Order must be in QC Passed/Dispatched before dispatch updates' });
+        const allowedStatuses = ['QC Passed', 'Dispatched'];
+        const hasQCPassedItems = await pool.query(
+            `SELECT 1 FROM order_items WHERE order_id = $1 AND COALESCE(qc_passed, false) = true AND tracking_status = 'Not Dispatched' LIMIT 1`,
+            [id]
+        );
+        if (!allowedStatuses.includes(fromStatus) && hasQCPassedItems.rows.length === 0) {
+            return res.status(400).json({ message: 'Order must have QC passed items before dispatch updates' });
         }
 
         const targetItemsRes = await pool.query(
             `SELECT item_id FROM order_items
              WHERE order_id = $1
+               AND COALESCE(qc_passed, false) = true
                AND tracking_status = 'Not Dispatched'
                AND ($2::int[] IS NULL OR item_id = ANY($2::int[]))`,
             [id, Array.isArray(item_ids) && item_ids.length > 0 ? item_ids : null]
@@ -1548,6 +1556,10 @@ exports.qcPassOrder = async (req, res) => {
         if (fromStatus !== 'QC Pending') {
             return res.status(400).json({ message: 'Only QC Pending orders can be marked QC Passed' });
         }
+        await pool.query(
+            `UPDATE order_items SET qc_passed = true WHERE order_id = $1`,
+            [id]
+        );
         const updateRes = await pool.query(`UPDATE orders SET status = 'QC Passed' WHERE order_id = $1 AND status = 'QC Pending'`, [id]);
         if (updateRes.rowCount === 0) {
             return res.status(400).json({ message: 'Order is not in QC Pending state' });
@@ -1557,12 +1569,63 @@ exports.qcPassOrder = async (req, res) => {
             fromStatus,
             toStatus: 'QC Passed',
             changedBy: req.user.user_id,
-            notes: 'QC team marked pass'
+            notes: 'QC team marked pass (all items)'
         });
         res.json({ success: true, message: 'Order marked as QC Passed' });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Failed to update order status' });
+    }
+};
+
+// Per-item QC pass: mark a single laptop as QC passed
+exports.qcPassOrderItem = async (req, res) => {
+    const { id, item_id } = req.params;
+    try {
+        const orderRes = await pool.query(`SELECT status FROM orders WHERE order_id = $1`, [id]);
+        const fromStatus = orderRes.rows[0]?.status || null;
+        if (!fromStatus) {
+            return res.status(404).json({ message: 'Order not found' });
+        }
+        if (fromStatus !== 'QC Pending') {
+            return res.status(400).json({ message: 'Only QC Pending orders can have items QC passed' });
+        }
+        const itemRes = await pool.query(
+            `SELECT item_id FROM order_items WHERE order_id = $1 AND item_id = $2`,
+            [id, item_id]
+        );
+        if (itemRes.rows.length === 0) {
+            return res.status(404).json({ message: 'Order item not found' });
+        }
+        await pool.query(
+            `UPDATE order_items SET qc_passed = true WHERE order_id = $1 AND item_id = $2`,
+            [id, item_id]
+        );
+        const allPassedRes = await pool.query(
+            `SELECT COUNT(*) AS total, SUM(CASE WHEN qc_passed = true THEN 1 ELSE 0 END) AS passed
+             FROM order_items WHERE order_id = $1`,
+            [id]
+        );
+        const { total, passed } = allPassedRes.rows[0] || {};
+        const allPassed = parseInt(total, 10) > 0 && parseInt(passed, 10) === parseInt(total, 10);
+        if (allPassed) {
+            await pool.query(`UPDATE orders SET status = 'QC Passed' WHERE order_id = $1`, [id]);
+            await logOrderStatusHistory(pool, {
+                orderId: parseInt(id, 10),
+                fromStatus,
+                toStatus: 'QC Passed',
+                changedBy: req.user.user_id,
+                notes: `QC passed: all ${total} items`
+            });
+        }
+        res.json({
+            success: true,
+            message: 'Laptop marked as QC Passed',
+            order_status: allPassed ? 'QC Passed' : fromStatus
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Failed to update item QC status' });
     }
 };
 
