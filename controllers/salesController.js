@@ -1484,13 +1484,14 @@ exports.dispatchOrder = async (req, res) => {
             return res.status(400).json({ message: 'Failed to move order to Dispatched' });
         }
 
-        // Also update inventory items to 'Outward'
+        // Update inventory to 'Outward' only for the items being dispatched
         await pool.query(`
             UPDATE inventory SET status = 'Outward'
             WHERE inventory_id IN (
-                SELECT inventory_id FROM order_items WHERE order_id = $1 AND inventory_id IS NOT NULL
+                SELECT inventory_id FROM order_items 
+                WHERE item_id = ANY($1::int[]) AND inventory_id IS NOT NULL
             )
-        `, [id]);
+        `, [targetItemIds]);
 
         await logOrderStatusHistory(pool, {
             orderId: parseInt(id, 10),
