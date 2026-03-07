@@ -1553,25 +1553,38 @@ exports.qcPassOrder = async (req, res) => {
         if (!fromStatus) {
             return res.status(404).json({ message: 'Order not found' });
         }
-        if (fromStatus !== 'QC Pending') {
-            return res.status(400).json({ message: 'Only QC Pending orders can be marked QC Passed' });
+        const allowedForPassAll = ['QC Pending', 'Warehouse Pending'];
+        if (!allowedForPassAll.includes(fromStatus)) {
+            return res.status(400).json({ message: 'Only QC Pending or Warehouse Pending orders can be marked QC Passed' });
         }
         await pool.query(
-            `UPDATE order_items SET qc_passed = true WHERE order_id = $1`,
+            `UPDATE order_items SET qc_passed = true WHERE order_id = $1 AND status = 'Assigned'`,
             [id]
         );
-        const updateRes = await pool.query(`UPDATE orders SET status = 'QC Passed' WHERE order_id = $1 AND status = 'QC Pending'`, [id]);
+        const assignedCountRes = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM order_items WHERE order_id = $1 AND status = 'Assigned'`,
+            [id]
+        );
+        const assignedCount = parseInt(assignedCountRes.rows[0]?.cnt || 0, 10);
+        const totalCountRes = await pool.query(`SELECT COUNT(*) AS cnt FROM order_items WHERE order_id = $1`, [id]);
+        const totalCount = parseInt(totalCountRes.rows[0]?.cnt || 0, 10);
+        const allAssignedAndPassed = assignedCount > 0 && assignedCount === totalCount;
+        const updateRes = await pool.query(
+            `UPDATE orders SET status = $1 WHERE order_id = $2 AND status IN ('QC Pending', 'Warehouse Pending')`,
+            [allAssignedAndPassed ? 'QC Passed' : 'QC Pending', id]
+        );
         if (updateRes.rowCount === 0) {
-            return res.status(400).json({ message: 'Order is not in QC Pending state' });
+            return res.status(400).json({ message: 'Order could not be updated' });
         }
+        const toStatus = allAssignedAndPassed ? 'QC Passed' : 'QC Pending';
         await logOrderStatusHistory(pool, {
             orderId: parseInt(id, 10),
             fromStatus,
-            toStatus: 'QC Passed',
+            toStatus,
             changedBy: req.user.user_id,
-            notes: 'QC team marked pass (all items)'
+            notes: allAssignedAndPassed ? 'QC team marked pass (all items)' : `QC passed ${assignedCount} of ${totalCount} items`
         });
-        res.json({ success: true, message: 'Order marked as QC Passed' });
+        res.json({ success: true, message: allAssignedAndPassed ? 'Order marked as QC Passed' : `${assignedCount} laptops marked QC Passed` });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Failed to update order status' });
@@ -1587,20 +1600,27 @@ exports.qcPassOrderItem = async (req, res) => {
         if (!fromStatus) {
             return res.status(404).json({ message: 'Order not found' });
         }
-        if (fromStatus !== 'QC Pending') {
-            return res.status(400).json({ message: 'Only QC Pending orders can have items QC passed' });
+        const allowedStatuses = ['QC Pending', 'Warehouse Pending'];
+        if (!allowedStatuses.includes(fromStatus)) {
+            return res.status(400).json({ message: 'Order must be in QC Pending or Warehouse Pending to QC pass items' });
         }
         const itemRes = await pool.query(
-            `SELECT item_id FROM order_items WHERE order_id = $1 AND item_id = $2`,
+            `SELECT item_id, status FROM order_items WHERE order_id = $1 AND item_id = $2`,
             [id, item_id]
         );
         if (itemRes.rows.length === 0) {
             return res.status(404).json({ message: 'Order item not found' });
         }
+        if (itemRes.rows[0].status !== 'Assigned') {
+            return res.status(400).json({ message: 'Only Assigned items (with machine scanned) can be QC passed' });
+        }
         await pool.query(
             `UPDATE order_items SET qc_passed = true WHERE order_id = $1 AND item_id = $2`,
             [id, item_id]
         );
+        if (fromStatus === 'Warehouse Pending') {
+            await pool.query(`UPDATE orders SET status = 'QC Pending' WHERE order_id = $1`, [id]);
+        }
         const allPassedRes = await pool.query(
             `SELECT COUNT(*) AS total, SUM(CASE WHEN qc_passed = true THEN 1 ELSE 0 END) AS passed
              FROM order_items WHERE order_id = $1`,

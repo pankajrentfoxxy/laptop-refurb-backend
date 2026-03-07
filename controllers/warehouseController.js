@@ -61,20 +61,19 @@ exports.markReady = async (req, res) => {
             [item_id]
         );
 
-        const pendingWarehouse = await client.query(
-            `SELECT 1 FROM order_items WHERE order_id = $1 AND status = 'Warehouse'`,
-            [item.order_id]
-        );
-        if (pendingWarehouse.rows.length === 0) {
-            const orderRes = await client.query(`SELECT status FROM orders WHERE order_id = $1`, [item.order_id]);
-            const fromStatus = orderRes.rows[0]?.status || null;
+        // Move order to QC Pending when at least one item is Assigned (ready for QC)
+        // This allows QC to pass ready laptops even when others are still in Warehouse
+        const orderRes = await client.query(`SELECT status FROM orders WHERE order_id = $1`, [item.order_id]);
+        const fromStatus = orderRes.rows[0]?.status || null;
+        const canMoveToQC = ['Warehouse Pending', 'Procurement Pending'].includes(fromStatus);
+        if (canMoveToQC) {
             await client.query(`UPDATE orders SET status = 'QC Pending' WHERE order_id = $1`, [item.order_id]);
             await logOrderStatusHistory(client, {
                 orderId: item.order_id,
                 fromStatus,
                 toStatus: 'QC Pending',
                 changedBy: req.user.user_id,
-                notes: 'Warehouse marked laptop ready, moved to QC'
+                notes: 'Warehouse marked laptop ready, order moved to QC (partial items ready)'
             });
         }
 
