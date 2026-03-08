@@ -621,23 +621,41 @@ exports.assignTicket = async (req, res) => {
 
     // Auto-update Stage logic
     if (user_id) {
-      // Fetch user's team
-      const userRes = await pool.query('SELECT team_id FROM users WHERE user_id = $1', [user_id]);
-      if (userRes.rows.length > 0) {
-        const targetTeamId = userRes.rows[0].team_id;
+      // Get all teams for this user (primary team_id + user_teams)
+      const userTeamsRes = await pool.query(
+        `SELECT team_id FROM users WHERE user_id = $1 AND team_id IS NOT NULL
+         UNION
+         SELECT team_id FROM user_teams WHERE user_id = $1`,
+        [user_id]
+      );
+      const userTeamIds = userTeamsRes.rows.map((r) => r.team_id).filter(Boolean);
 
-        // Find stage for this team
-        // If multiple, pick the first one by order
+      if (userTeamIds.length > 0) {
+        // Find the stage with earliest stage_order among user's teams (matches ticket workflow order)
         const stageRes = await pool.query(
-          'SELECT stage_id FROM stages WHERE team_id = $1 ORDER BY stage_order ASC LIMIT 1',
-          [targetTeamId]
+          `SELECT s.stage_id, s.team_id FROM stages s
+           WHERE s.team_id = ANY($1::int[])
+           ORDER BY s.stage_order ASC LIMIT 1`,
+          [userTeamIds]
         );
 
         if (stageRes.rows.length > 0) {
           const targetStageId = stageRes.rows[0].stage_id;
+          const targetTeamId = stageRes.rows[0].team_id;
           updateQuery += `, current_stage_id = ${targetStageId}, assigned_team_id = ${targetTeamId}`;
           logMessage += `Moved to stage ID: ${targetStageId}. `;
         }
+      }
+    } else if (team_id) {
+      // When assigning to team only, move to that team's first stage
+      const stageRes = await pool.query(
+        'SELECT stage_id FROM stages WHERE team_id = $1 ORDER BY stage_order ASC LIMIT 1',
+        [team_id]
+      );
+      if (stageRes.rows.length > 0) {
+        const targetStageId = stageRes.rows[0].stage_id;
+        updateQuery += `, current_stage_id = ${targetStageId}`;
+        logMessage += `Moved to stage ID: ${targetStageId}. `;
       }
     }
 
