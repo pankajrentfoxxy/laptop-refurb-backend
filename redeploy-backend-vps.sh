@@ -24,6 +24,19 @@ cd "$WORKDIR"
 echo "Cloning backend repo..."
 git clone --depth 1 https://github.com/pankajrentfoxxy/laptop-refurb-backend.git .
 
+# Run migrations (DB_NAME from env, default: postgres)
+DB_NAME=$(grep '^DB_NAME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+DB_NAME="${DB_NAME:-postgres}"
+if [ -d "migrations" ] && ls migrations/*.sql 1>/dev/null 2>&1; then
+  echo "Running migrations against database: $DB_NAME"
+  for f in $(ls migrations/*.sql 2>/dev/null | sort); do
+    echo "  - $(basename "$f")"
+    docker exec -i laptop-erp-postgres psql -U postgres -d "$DB_NAME" < "$f" 2>/dev/null || true
+  done
+else
+  echo "No migrations found, skipping."
+fi
+
 echo "Stopping backend..."
 docker stop laptop-erp-backend 2>/dev/null || true
 docker rm laptop-erp-backend 2>/dev/null || true

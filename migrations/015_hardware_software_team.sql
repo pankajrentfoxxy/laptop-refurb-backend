@@ -1,5 +1,5 @@
 -- Hardware & Software Team: Single team for Diagnosis, Assembly & Software, Final Testing
--- Run on Hostinger: docker exec -i laptop-erp-postgres psql -U postgres -d postgres < migrations/015_hardware_software_team.sql
+-- DB name on Hostinger is 'postgres'. Run: docker exec -i laptop-erp-postgres psql -U postgres -d postgres < migrations/015_hardware_software_team.sql
 
 -- 1. Create Hardware & Software team if not exists
 INSERT INTO teams (team_name) 

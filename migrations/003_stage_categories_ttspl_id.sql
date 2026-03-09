@@ -1,5 +1,5 @@
 -- Stage categories and TTSPL ID
--- Run: node run-migrations.js
+-- Run on VPS: docker exec -i laptop-erp-postgres psql -U postgres -d postgres < migrations/003_stage_categories_ttspl_id.sql
 
 -- 1. Add stage_category to stages
 ALTER TABLE stages ADD COLUMN IF NOT EXISTS stage_category VARCHAR(100);
