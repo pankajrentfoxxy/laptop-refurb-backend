@@ -24,14 +24,25 @@ cd "$WORKDIR"
 echo "Cloning backend repo..."
 git clone --depth 1 https://github.com/pankajrentfoxxy/laptop-refurb-backend.git .
 
-# Run migrations (DB_NAME from env, default: postgres)
+# Run pending migrations only (tracked in schema_migrations table)
 DB_NAME=$(grep '^DB_NAME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
 DB_NAME="${DB_NAME:-postgres}"
 if [ -d "migrations" ] && ls migrations/*.sql 1>/dev/null 2>&1; then
-  echo "Running migrations against database: $DB_NAME"
+  echo "Checking migrations against database: $DB_NAME"
+  # Bootstrap: ensure schema_migrations table exists
+  if [ -f "migrations/000_schema_migrations.sql" ]; then
+    docker exec -i laptop-erp-postgres psql -U postgres -d "$DB_NAME" < migrations/000_schema_migrations.sql 2>/dev/null || true
+  fi
   for f in $(ls migrations/*.sql 2>/dev/null | sort); do
-    echo "  - $(basename "$f")"
-    docker exec -i laptop-erp-postgres psql -U postgres -d "$DB_NAME" < "$f" 2>/dev/null || true
+    name=$(basename "$f")
+    applied=$(docker exec laptop-erp-postgres psql -U postgres -d "$DB_NAME" -t -A -c "SELECT 1 FROM schema_migrations WHERE name='$name' LIMIT 1" 2>/dev/null || echo "")
+    if [ -z "$applied" ] || [ "$applied" != "1" ]; then
+      echo "  Running: $name"
+      docker exec -i laptop-erp-postgres psql -U postgres -d "$DB_NAME" < "$f"
+      docker exec laptop-erp-postgres psql -U postgres -d "$DB_NAME" -c "INSERT INTO schema_migrations (name) VALUES ('$name') ON CONFLICT (name) DO NOTHING"
+    else
+      echo "  Skipped (already applied): $name"
+    fi
   done
 else
   echo "No migrations found, skipping."
