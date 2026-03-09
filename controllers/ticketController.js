@@ -115,16 +115,6 @@ exports.getTickets = async (req, res) => {
   const { status, stage_id, team_id, search, view } = req.query;
 
   try {
-    let isProcurementTeam = false;
-    if (req.user.team_id) {
-      const teamRes = await pool.query(
-        `SELECT team_name FROM teams WHERE team_id = $1`,
-        [req.user.team_id]
-      );
-      const teamName = teamRes.rows[0]?.team_name || '';
-      isProcurementTeam = teamName.toLowerCase().includes('procurement');
-    }
-
     let query = `
       SELECT t.*, 
              s.stage_name, s.stage_order,
@@ -152,56 +142,25 @@ exports.getTickets = async (req, res) => {
       paramCount++;
     }
 
-    // Role-based visibility
+    // Role-based visibility: Admin & Floor Manager see all; Team members see only tickets assigned to them
     const privilegedRoles = ['admin', 'floor_manager', 'manager'];
-    const userTeamIds = req.user.team_ids && req.user.team_ids.length > 0
-      ? req.user.team_ids
-      : (req.user.team_id != null ? [req.user.team_id] : []);
 
     if (!privilegedRoles.includes(req.user.role)) {
-      // Regular users: See tickets assigned to ME or Unassigned in ANY of MY TEAMS
-      // When view=completed, also include tickets user has moved (stage_changed)
-      if (!team_id) {
-        let visibilityClause = '';
-        if (isProcurementTeam) {
-          visibilityClause = `(
-            t.assigned_user_id = $${paramCount}
-            OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL)
-            OR EXISTS (
-              SELECT 1 FROM part_requests pr
-              WHERE pr.ticket_id = t.ticket_id AND pr.status = 'pending'
-            )
-          )`;
-          params.push(req.user.user_id);
-          params.push(req.user.team_id);
-          paramCount += 2;
-        } else if (userTeamIds.length > 0) {
-          visibilityClause = `(
-            t.assigned_user_id = $${paramCount}
-            OR (t.assigned_team_id = ANY($${paramCount + 1}::int[]) AND t.assigned_user_id IS NULL)
-          )`;
-          params.push(req.user.user_id);
-          params.push(userTeamIds);
-          paramCount += 2;
-        } else {
-          visibilityClause = `(t.assigned_user_id = $${paramCount} OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL))`;
-          params.push(req.user.user_id);
-          params.push(req.user.team_id);
-          paramCount += 2;
-        }
-        if (view === 'completed') {
-          query += ` AND (${visibilityClause} OR EXISTS (
-            SELECT 1 FROM activities a WHERE a.ticket_id = t.ticket_id AND a.user_id = $${paramCount}
-            AND a.action IN ('stage_changed','stage_jumped')
-          ))`;
-          params.push(req.user.user_id);
-          paramCount++;
-        } else {
-          query += ` AND ${visibilityClause}`;
-        }
+      // Team members: See ONLY tickets assigned to them (ignore team_id filter)
+      if (view === 'completed') {
+        query += ` AND (t.assigned_user_id = $${paramCount} OR EXISTS (
+          SELECT 1 FROM activities a WHERE a.ticket_id = t.ticket_id AND a.user_id = $${paramCount}
+          AND a.action IN ('stage_changed','stage_jumped')
+        ))`;
+        params.push(req.user.user_id);
+        paramCount++;
+      } else {
+        query += ` AND t.assigned_user_id = $${paramCount}`;
+        params.push(req.user.user_id);
+        paramCount++;
       }
     } else {
-      // Admins/Managers can filter by ANY team_id if provided query param
+      // Admins/Floor Managers: can filter by team_id if provided
       if (team_id) {
         query += ` AND t.assigned_team_id = $${paramCount}`;
         params.push(team_id);
@@ -258,9 +217,10 @@ exports.getAllStages = async (req, res) => {
   }
 };
 
-// Get My Tickets (assigned to user or any of their teams)
+// Get My Tickets (Admin/Floor Manager: all; Team members: only tickets assigned to them)
 exports.getMyTickets = async (req, res) => {
   try {
+    const privilegedRoles = ['admin', 'floor_manager', 'manager'];
     let query = `
       SELECT t.*, 
              s.stage_name, s.stage_order,
@@ -273,18 +233,9 @@ exports.getMyTickets = async (req, res) => {
     `;
 
     const params = [];
-    const userTeamIds = req.user.team_ids && req.user.team_ids.length > 0
-      ? req.user.team_ids
-      : (req.user.team_id != null ? [req.user.team_id] : []);
-
-    if (req.user.role !== 'admin') {
-      if (userTeamIds.length > 0) {
-        query += ` WHERE t.assigned_user_id = $1 OR t.assigned_team_id = ANY($2::int[])`;
-        params.push(req.user.user_id, userTeamIds);
-      } else {
-        query += ` WHERE t.assigned_user_id = $1 OR t.assigned_team_id = $2`;
-        params.push(req.user.user_id, req.user.team_id);
-      }
+    if (!privilegedRoles.includes(req.user.role)) {
+      query += ` WHERE t.assigned_user_id = $1`;
+      params.push(req.user.user_id);
     }
 
     query += ` ORDER BY t.created_at DESC`;
@@ -330,6 +281,18 @@ exports.getTicketById = async (req, res) => {
     }
 
     const ticket = result.rows[0];
+
+    // Team members can only view tickets assigned to them
+    const privilegedRoles = ['admin', 'floor_manager', 'manager'];
+    if (!privilegedRoles.includes(req.user.role)) {
+      const assignedToMe = Number(ticket.assigned_user_id) === Number(req.user.user_id);
+      if (!assignedToMe) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: you can only view tickets assigned to you'
+        });
+      }
+    }
 
     // Get activities
     const activities = await pool.query(
