@@ -3,7 +3,7 @@ const pool = require('../config/db');
 // Create Ticket
 exports.createTicket = async (req, res) => {
   const {
-    serial_number, brand, model, initial_condition, priority, initial_cost,
+    serial_number, ttspl_id, brand, model, initial_condition, priority, initial_cost,
     assigned_team_id, assigned_user_id, processor, ram, storage
   } = req.body;
 
@@ -63,10 +63,10 @@ exports.createTicket = async (req, res) => {
     // Create ticket
     const result = await pool.query(
       `INSERT INTO tickets 
-       (serial_number, brand, model, initial_condition, priority, current_stage_id, assigned_team_id, assigned_user_id, initial_cost, machine_number, processor, ram, storage) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+       (serial_number, ttspl_id, brand, model, initial_condition, priority, current_stage_id, assigned_team_id, assigned_user_id, initial_cost, machine_number, processor, ram, storage) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
        RETURNING *`,
-      [serial_number, brand, model, initial_condition, priority || 'normal',
+      [serial_number, ttspl_id || null, brand, model, initial_condition, priority || 'normal',
         finalStageId, finalTeamId, finalUserId, initial_cost || 0, machine_number,
         inv_processor, inv_ram, inv_storage]
     );
@@ -112,7 +112,7 @@ exports.createTicket = async (req, res) => {
 
 // Get Tickets (with filters)
 exports.getTickets = async (req, res) => {
-  const { status, stage_id, team_id, search } = req.query;
+  const { status, stage_id, team_id, search, view } = req.query;
 
   try {
     let isProcurementTeam = false;
@@ -160,9 +160,11 @@ exports.getTickets = async (req, res) => {
 
     if (!privilegedRoles.includes(req.user.role)) {
       // Regular users: See tickets assigned to ME or Unassigned in ANY of MY TEAMS
+      // When view=completed, also include tickets user has moved (stage_changed)
       if (!team_id) {
+        let visibilityClause = '';
         if (isProcurementTeam) {
-          query += ` AND (
+          visibilityClause = `(
             t.assigned_user_id = $${paramCount}
             OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL)
             OR EXISTS (
@@ -174,7 +176,7 @@ exports.getTickets = async (req, res) => {
           params.push(req.user.team_id);
           paramCount += 2;
         } else if (userTeamIds.length > 0) {
-          query += ` AND (
+          visibilityClause = `(
             t.assigned_user_id = $${paramCount}
             OR (t.assigned_team_id = ANY($${paramCount + 1}::int[]) AND t.assigned_user_id IS NULL)
           )`;
@@ -182,10 +184,20 @@ exports.getTickets = async (req, res) => {
           params.push(userTeamIds);
           paramCount += 2;
         } else {
-          query += ` AND (t.assigned_user_id = $${paramCount} OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL))`;
+          visibilityClause = `(t.assigned_user_id = $${paramCount} OR (t.assigned_team_id = $${paramCount + 1} AND t.assigned_user_id IS NULL))`;
           params.push(req.user.user_id);
           params.push(req.user.team_id);
           paramCount += 2;
+        }
+        if (view === 'completed') {
+          query += ` AND (${visibilityClause} OR EXISTS (
+            SELECT 1 FROM activities a WHERE a.ticket_id = t.ticket_id AND a.user_id = $${paramCount}
+            AND a.action IN ('stage_changed','stage_jumped')
+          ))`;
+          params.push(req.user.user_id);
+          paramCount++;
+        } else {
+          query += ` AND ${visibilityClause}`;
         }
       }
     } else {
@@ -201,6 +213,22 @@ exports.getTickets = async (req, res) => {
       query += ` AND (t.serial_number ILIKE $${paramCount} OR t.model ILIKE $${paramCount})`;
       params.push(`%${search}%`);
       paramCount++;
+    }
+
+    // View filter: completed tab shows status=completed OR tickets user moved; in_progress shows status!=completed
+    if (view === 'completed') {
+      if (!privilegedRoles.includes(req.user.role)) {
+        query += ` AND (t.status = 'completed' OR EXISTS (
+          SELECT 1 FROM activities a WHERE a.ticket_id = t.ticket_id AND a.user_id = $${paramCount}
+          AND a.action IN ('stage_changed','stage_jumped')
+        ))`;
+        params.push(req.user.user_id);
+        paramCount++;
+      } else {
+        query += ` AND t.status = 'completed'`;
+      }
+    } else if (view === 'in_progress') {
+      query += ` AND t.status != 'completed'`;
     }
 
     query += ' ORDER BY t.created_at DESC';
@@ -503,12 +531,26 @@ exports.moveToNextStage = async (req, res) => {
       );
     }
 
+    // Preserve assignee when moving within same stage category (Hardware & Software, QC Team)
+    let keepAssignee = false;
+    if (ticket.assigned_user_id && nextStage.stage_category) {
+      const currentStageRes = await pool.query(
+        'SELECT stage_category FROM stages WHERE stage_id = $1',
+        [ticket.current_stage_id]
+      );
+      const currentCategory = currentStageRes.rows[0]?.stage_category;
+      if (currentCategory && currentCategory === nextStage.stage_category) {
+        keepAssignee = true;
+      }
+    }
+
     // Update ticket to next stage
     // If completed, we also set status='completed' and completed_at
+    const assignedUserIdValue = keepAssignee ? ticket.assigned_user_id : null;
     let updateQuery = `UPDATE tickets 
-       SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = NULL`;
+       SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = $4`;
 
-    const updateParams = [nextStage.stage_id, nextStage.team_id, id];
+    const updateParams = [nextStage.stage_id, nextStage.team_id, id, assignedUserIdValue];
 
     if (isCompleted) {
       updateQuery += `, status = 'completed', completed_at = CURRENT_TIMESTAMP`;

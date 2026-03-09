@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS stages (
     stage_name VARCHAR(100) NOT NULL,
     stage_order INTEGER NOT NULL,
     team_id INTEGER REFERENCES teams(team_id),
+    stage_category VARCHAR(100),
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS stages (
 CREATE TABLE IF NOT EXISTS tickets (
     ticket_id SERIAL PRIMARY KEY,
     serial_number VARCHAR(100) UNIQUE NOT NULL,
+    ttspl_id VARCHAR(100),
     machine_number VARCHAR(100),
     brand VARCHAR(50),
     model VARCHAR(100),
@@ -427,22 +429,22 @@ INSERT INTO teams (team_name) VALUES
 ('QC1 Team'),('QC2 Team'),('Inventory Team')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO stages (stage_name, stage_order, team_id, description)
-SELECT v.stage_name, v.stage_order, t.team_id, v.description
+INSERT INTO stages (stage_name, stage_order, team_id, stage_category, description)
+SELECT v.stage_name, v.stage_order, t.team_id, v.stage_category, v.description
 FROM (
   VALUES
-    ('Floor Manager', 1, 'Warehouse Team', 'Receive laptop and create initial ticket'),
-    ('Diagnosis', 2, 'Diagnose Team', 'Full hardware and cosmetic diagnosis'),
-    ('Chip Level Repair', 3, 'Chip Level Repair Team', 'Motherboard and chip-level repairs'),
-    ('Dismantle', 4, 'Dismantle Team', 'Parts tagging and removal'),
-    ('Procurement', 5, 'Procurement Team', 'Source required parts'),
-    ('Body & Paint', 6, 'Vendor (Body & Paint)', 'Body repair and paint work'),
-    ('Assembly & Software', 7, 'Assembly & Software Team', 'Repair, replacement, and software installation'),
-    ('Final Testing', 8, 'Testing Team', 'Final system validation and defect resolution'),
-    ('QC1', 9, 'QC1 Team', 'First quality check - 50+ points'),
-    ('QC2', 10, 'QC2 Team', 'Second quality check - final verification'),
-    ('Inventory', 11, 'Inventory Team', 'Add to final inventory')
-) AS v(stage_name, stage_order, team_name, description)
+    ('Floor Manager', 1, 'Warehouse Team', NULL, 'Receive laptop and create initial ticket'),
+    ('Diagnosis', 2, 'Diagnose Team', 'Hardware & Software', 'Full hardware and cosmetic diagnosis'),
+    ('Chip Level Repair', 3, 'Chip Level Repair Team', NULL, 'Motherboard and chip-level repairs'),
+    ('Dismantle', 4, 'Dismantle Team', NULL, 'Parts tagging and removal'),
+    ('Procurement', 5, 'Procurement Team', NULL, 'Source required parts'),
+    ('Body & Paint', 6, 'Vendor (Body & Paint)', NULL, 'Body repair and paint work'),
+    ('Assembly & Software', 7, 'Assembly & Software Team', 'Hardware & Software', 'Repair, replacement, and software installation'),
+    ('Final Testing', 8, 'Testing Team', 'Hardware & Software', 'Final system validation and defect resolution'),
+    ('QC1', 9, 'QC1 Team', 'QC Team', 'First quality check - 50+ points'),
+    ('QC2', 10, 'QC2 Team', 'QC Team', 'Second quality check - final verification'),
+    ('Inventory', 11, 'Inventory Team', NULL, 'Add to final inventory')
+) AS v(stage_name, stage_order, team_name, stage_category, description)
 JOIN teams t ON t.team_name = v.team_name
 ON CONFLICT DO NOTHING;
 
