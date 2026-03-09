@@ -230,7 +230,7 @@ exports.saveDiagnosis = async (req, res) => {
 exports.submitDiagnosis = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.user_id;
-    const { diagnosisData, selectedParts, remarks } = req.body; // New structure
+    const { diagnosisData, selectedParts, remarks, chip_level_repair_required, body_paint_required } = req.body;
 
     const client = await pool.connect();
 
@@ -253,25 +253,29 @@ exports.submitDiagnosis = async (req, res) => {
             });
 
             if (section.flag) {
-                // If any field in section fails, set flag? OR based on specific rules? 
-                // Simplified: If sectionFailed, set flag
                 flags[section.flag] = sectionFailed;
             }
         });
 
-        // 2. Determine Next Team
-        // Logic: chip-level failures -> L3, parts -> Procurement, else -> Assembly & Software
+        // 2. Determine Next Team & Stage
+        // Flow: Issues found -> Floor Manager | Chip level? -> Chip Level Repair | Body paint? -> Body & Paint | Parts? -> Procurement | Else -> Assembly & Software (keep assignee)
 
         let nextTeam = 'Assembly & Software';
+        let keepAssignee = false;
 
-        if (flags.chip_level_repair_required) {
+        if (totalFailures > 0) {
+            nextTeam = 'Floor Manager';
+        } else if (chip_level_repair_required === true || flags.chip_level_repair_required) {
             nextTeam = 'Chip Level Repair';
+        } else if (body_paint_required === true) {
+            nextTeam = 'Body & Paint';
         } else if (selectedParts && selectedParts.length > 0) {
             nextTeam = 'Procurement';
         } else if (flags.security_hold) {
             nextTeam = 'Hold';
-        } else if (totalFailures > 0) {
+        } else {
             nextTeam = 'Assembly & Software';
+            keepAssignee = true; // Same team member continues to Assembly & Software
         }
 
         // 3. Save Diagnosis Results
@@ -315,14 +319,21 @@ exports.submitDiagnosis = async (req, res) => {
         let nextStageName = 'Assembly & Software';
         if (nextTeam === 'Procurement') nextStageName = 'Procurement';
         if (nextTeam === 'Chip Level Repair') nextStageName = 'Chip Level Repair';
+        if (nextTeam === 'Body & Paint') nextStageName = 'Body & Paint';
+        if (nextTeam === 'Floor Manager') nextStageName = 'Floor Manager';
         if (nextTeam === 'Hold') nextStageName = 'Hold';
 
-        // Find stage ID
+        // Find stage and team for next stage
         let nextStageId = null;
-        const stageRes = await client.query(`SELECT stage_id FROM stages WHERE stage_name ILIKE $1 LIMIT 1`, [`%${nextStageName}%`]);
+        const stageRes = await client.query(`SELECT stage_id, team_id FROM stages WHERE stage_name ILIKE $1 LIMIT 1`, [`%${nextStageName}%`]);
         if (stageRes.rows.length > 0) {
             nextStageId = stageRes.rows[0].stage_id;
-            await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_user_id = NULL WHERE ticket_id = $2`, [nextStageId, id]);
+            const nextTeamId = stageRes.rows[0].team_id;
+            if (keepAssignee) {
+                await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_team_id = $2 WHERE ticket_id = $3`, [nextStageId, nextTeamId, id]);
+            } else {
+                await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = NULL WHERE ticket_id = $3`, [nextStageId, nextTeamId, id]);
+            }
         }
 
         // 6. Log Activity
