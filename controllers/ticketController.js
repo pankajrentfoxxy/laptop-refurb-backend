@@ -146,7 +146,7 @@ exports.getTickets = async (req, res) => {
     const privilegedRoles = ['admin', 'floor_manager', 'manager'];
 
     if (!privilegedRoles.includes(req.user.role)) {
-      // Team members: See ONLY tickets assigned to them (ignore team_id filter)
+      // Team members: See ONLY tickets assigned to them (never unassigned tickets)
       if (view === 'completed') {
         query += ` AND (t.assigned_user_id = $${paramCount} OR EXISTS (
           SELECT 1 FROM activities a WHERE a.ticket_id = t.ticket_id AND a.user_id = $${paramCount}
@@ -155,7 +155,8 @@ exports.getTickets = async (req, res) => {
         params.push(req.user.user_id);
         paramCount++;
       } else {
-        query += ` AND t.assigned_user_id = $${paramCount}`;
+        // In-progress: must be assigned to this user (exclude NULL explicitly)
+        query += ` AND t.assigned_user_id IS NOT NULL AND t.assigned_user_id = $${paramCount}`;
         params.push(req.user.user_id);
         paramCount++;
       }
@@ -234,7 +235,7 @@ exports.getMyTickets = async (req, res) => {
 
     const params = [];
     if (!privilegedRoles.includes(req.user.role)) {
-      query += ` WHERE t.assigned_user_id = $1`;
+      query += ` WHERE t.assigned_user_id IS NOT NULL AND t.assigned_user_id = $1`;
       params.push(req.user.user_id);
     }
 
