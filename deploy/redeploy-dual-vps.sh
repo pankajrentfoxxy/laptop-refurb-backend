@@ -10,12 +10,17 @@ RENTFOXXY_ERP="/docker/rentfoxxy_erp"
 
 echo "=== Deploy dual-domain (crm + erp) to VPS ==="
 
-# 1. Fetch nginx.deploy.conf from GitHub
+# 1. Fetch nginx config from GitHub (CRM-only for stability until rentfoxxy_erp is ready)
 echo "Fetching nginx.deploy.conf..."
 mkdir -p "$LAPTOP_ERP"
-curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.conf" -o "$LAPTOP_ERP/nginx.deploy.conf"
+# Use CRM-only config - no ERP blocks, avoids "host not found" and missing cert errors
+curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.crm-only.conf" -o "$LAPTOP_ERP/nginx.deploy.conf"
 if [ ! -s "$LAPTOP_ERP/nginx.deploy.conf" ]; then
-  echo "ERROR: nginx.deploy.conf empty or not found. Push deploy/nginx.deploy.conf to GitHub first."
+  echo "Trying full dual config..."
+  curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.conf" -o "$LAPTOP_ERP/nginx.deploy.conf"
+fi
+if [ ! -s "$LAPTOP_ERP/nginx.deploy.conf" ]; then
+  echo "ERROR: nginx config not found. Push deploy files to GitHub first."
   exit 1
 fi
 
