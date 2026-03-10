@@ -25,11 +25,13 @@ if [ -f "$COMPOSE" ] && ! grep -q "443:443" "$COMPOSE" 2>/dev/null; then
   echo "Note: Add '443:443' and letsencrypt/certbot volumes to web service in docker-compose.yml for HTTPS."
 fi
 
-# 3. Rebuild and restart laptop-erp web
+# 3. Rebuild and restart laptop-erp web (--no-deps: don't touch backend/postgres)
 echo "Rebuilding laptop-erp web..."
 cd "$LAPTOP_ERP"
 docker compose build web --no-cache
-docker compose up -d web
+docker stop laptop-erp-web 2>/dev/null || true
+docker rm laptop-erp-web 2>/dev/null || true
+docker compose up -d web --no-deps
 echo "laptop-erp-web restarted."
 
 # 4. Restart rentfoxxy_erp if present (ensure it's on shared network)
