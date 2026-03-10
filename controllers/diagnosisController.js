@@ -329,10 +329,12 @@ exports.submitDiagnosis = async (req, res) => {
         if (stageRes.rows.length > 0) {
             nextStageId = stageRes.rows[0].stage_id;
             const nextTeamId = stageRes.rows[0].team_id;
+            // When reverting to Floor Manager (issues found), set priority=high so ticket is highlighted
+            const priorityClause = nextTeam === 'Floor Manager' ? ', priority = \'high\'' : '';
             if (keepAssignee) {
                 await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_team_id = $2 WHERE ticket_id = $3`, [nextStageId, nextTeamId, id]);
             } else {
-                await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = NULL WHERE ticket_id = $3`, [nextStageId, nextTeamId, id]);
+                await client.query(`UPDATE tickets SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = NULL${priorityClause} WHERE ticket_id = $3`, [nextStageId, nextTeamId, id]);
             }
         }
 

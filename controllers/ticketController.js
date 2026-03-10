@@ -597,7 +597,7 @@ exports.moveToNextStage = async (req, res) => {
 // Assign Ticket to User or Team
 exports.assignTicket = async (req, res) => {
   const { id } = req.params;
-  const { user_id, team_id } = req.body;
+  const { user_id, team_id, target_stage_id } = req.body;
 
   try {
     let updateQuery = 'UPDATE tickets SET ';
@@ -625,8 +625,19 @@ exports.assignTicket = async (req, res) => {
     // Remove trailing comma and space
     updateQuery = updateQuery.slice(0, -2);
 
-    // Auto-update Stage logic
-    if (user_id) {
+    // Stage logic: target_stage_id (priority assign) > user's first stage > team's first stage
+    let targetStageId = null;
+    let targetTeamId = null;
+
+    if (target_stage_id) {
+      // Floor manager priority assign: user + stage specified
+      const stageRes = await pool.query('SELECT stage_id, team_id FROM stages WHERE stage_id = $1', [target_stage_id]);
+      if (stageRes.rows.length > 0) {
+        targetStageId = stageRes.rows[0].stage_id;
+        targetTeamId = stageRes.rows[0].team_id;
+        logMessage += `Moved to stage ID: ${targetStageId}. `;
+      }
+    } else if (user_id) {
       // Get all teams for this user (primary team_id + user_teams)
       const userTeamsRes = await pool.query(
         `SELECT team_id FROM users WHERE user_id = $1 AND team_id IS NOT NULL
@@ -637,34 +648,35 @@ exports.assignTicket = async (req, res) => {
       const userTeamIds = userTeamsRes.rows.map((r) => r.team_id).filter(Boolean);
 
       if (userTeamIds.length > 0) {
-        // Find the stage with earliest stage_order among user's teams (matches ticket workflow order)
         const stageRes = await pool.query(
           `SELECT s.stage_id, s.team_id FROM stages s
            WHERE s.team_id = ANY($1::int[])
            ORDER BY s.stage_order ASC LIMIT 1`,
           [userTeamIds]
         );
-
         if (stageRes.rows.length > 0) {
-          const targetStageId = stageRes.rows[0].stage_id;
-          const targetTeamId = stageRes.rows[0].team_id;
-          updateQuery += `, current_stage_id = ${targetStageId}, assigned_team_id = ${targetTeamId}`;
+          targetStageId = stageRes.rows[0].stage_id;
+          targetTeamId = stageRes.rows[0].team_id;
           logMessage += `Moved to stage ID: ${targetStageId}. `;
         }
       }
     } else if (team_id) {
       // When assigning to team only, move to that team's first stage
       const stageRes = await pool.query(
-        'SELECT stage_id FROM stages WHERE team_id = $1 ORDER BY stage_order ASC LIMIT 1',
+        'SELECT stage_id, team_id FROM stages WHERE team_id = $1 ORDER BY stage_order ASC LIMIT 1',
         [team_id]
       );
       if (stageRes.rows.length > 0) {
-        const targetStageId = stageRes.rows[0].stage_id;
-        updateQuery += `, current_stage_id = ${targetStageId}`;
+        targetStageId = stageRes.rows[0].stage_id;
+        targetTeamId = stageRes.rows[0].team_id;
         logMessage += `Moved to stage ID: ${targetStageId}. `;
       }
     }
 
+    if (targetStageId != null) {
+      updateQuery += `, current_stage_id = ${targetStageId}`;
+      if (targetTeamId != null) updateQuery += `, assigned_team_id = ${targetTeamId}`;
+    }
     updateQuery += `, status = 'in_progress', completed_at = NULL WHERE ticket_id = $${paramCount} RETURNING *`;
     params.push(id);
 
