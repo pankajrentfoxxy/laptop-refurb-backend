@@ -12,9 +12,15 @@ if [ -z "$NETWORK" ]; then
   exit 1
 fi
 
-# Save env from current backend container (format: KEY=VALUE per line)
+# Env: prefer persistent /docker/laptop-erp/.env (for ERP_API_TOKEN etc), else copy from current container
 ENV_FILE="/tmp/backend-env-$$.env"
-docker inspect laptop-erp-backend --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -v '^$' > "$ENV_FILE" || true
+PERSISTENT_ENV="/docker/laptop-erp/.env"
+if [ -s "$PERSISTENT_ENV" ]; then
+  echo "Using persistent env from $PERSISTENT_ENV"
+  cp "$PERSISTENT_ENV" "$ENV_FILE"
+else
+  docker inspect laptop-erp-backend --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -v '^$' > "$ENV_FILE" || true
+fi
 
 WORKDIR="/tmp/backend-redeploy"
 rm -rf "$WORKDIR"
