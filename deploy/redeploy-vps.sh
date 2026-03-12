@@ -1,38 +1,68 @@
 #!/bin/bash
-# Deploy laptop-erp (CRM) to VPS
+# Deploy laptop-erp web (frontend) to VPS
 # Run: ssh root@187.77.187.213 "curl -sSL https://raw.githubusercontent.com/pankajrentfoxxy/laptop-refurb-backend/main/deploy/redeploy-vps.sh | bash"
+#
+# Works with Hostinger: backend + postgres run via docker-compose. This script
+# fetches latest frontend build files, rebuilds web image, restarts web container.
 
 set -e
 REPO="${REPO:-pankajrentfoxxy/laptop-refurb-backend}"
 BRANCH="${BRANCH:-main}"
 LAPTOP_ERP="/docker/laptop-erp"
+WORKDIR="/tmp/redeploy-web-$$"
 
-echo "=== Deploy laptop-erp (CRM) to VPS ==="
+echo "=== Deploy laptop-erp web (CRM frontend) to VPS ==="
 
-# 1. Fetch nginx config from GitHub
-echo "Fetching nginx.deploy.conf..."
+# 1. Clone repo to get latest Dockerfile, nginx config, docker-compose
+echo "Fetching latest from GitHub..."
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+git clone --depth 1 "https://github.com/${REPO}.git" .
+
+# 2. Ensure /docker/laptop-erp exists and has required structure
 mkdir -p "$LAPTOP_ERP"
-curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.conf" -o "$LAPTOP_ERP/nginx.deploy.conf"
-if [ ! -s "$LAPTOP_ERP/nginx.deploy.conf" ]; then
-  echo "ERROR: nginx.deploy.conf not found. Push deploy files to GitHub first."
-  exit 1
+mkdir -p "$LAPTOP_ERP/deploy"
+
+# 3. Copy files needed for web build (HTTP-only nginx avoids SSL cert restart loop)
+echo "Copying deploy files..."
+if [ -f deploy/nginx.deploy.http-only.conf ]; then
+  cp -f deploy/nginx.deploy.http-only.conf "$LAPTOP_ERP/deploy/"
+else
+  curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.http-only.conf" -o "$LAPTOP_ERP/deploy/nginx.deploy.http-only.conf" || \
+  cp -f deploy/nginx.deploy.conf "$LAPTOP_ERP/deploy/nginx.deploy.http-only.conf"
+fi
+cp -f Dockerfile.web.deploy "$LAPTOP_ERP/"
+
+# 4. Copy docker-compose only if missing (preserve Hostinger's .env)
+if [ ! -f "$LAPTOP_ERP/docker-compose.yml" ] && [ ! -f "$LAPTOP_ERP/docker-compose.yaml" ]; then
+  cp -f docker-compose.yaml "$LAPTOP_ERP/"
 fi
 
-# 2. Rebuild and restart laptop-erp web
-echo "Rebuilding laptop-erp web..."
+# 5. Rebuild web image
+echo "Rebuilding web image..."
 cd "$LAPTOP_ERP"
 docker compose build web --no-cache
+
+# 6. Stop and remove old web container
+echo "Restarting web container..."
 docker stop laptop-erp-web 2>/dev/null || true
 docker rm laptop-erp-web 2>/dev/null || true
+
+# 7. Start web container (use docker run to avoid recreating postgres/backend)
 NETWORK=$(docker inspect laptop-erp-backend --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || echo "laptop-erp_default")
 echo "Using network: $NETWORK"
 mkdir -p /var/www/certbot
+mkdir -p /etc/letsencrypt
+
 docker run -d --name laptop-erp-web --restart unless-stopped --network "$NETWORK" \
   -p 80:80 -p 443:443 \
-  -v /etc/letsencrypt:/etc/letsencrypt:ro \
   -v /var/www/certbot:/var/www/certbot \
+  -v /etc/letsencrypt:/etc/letsencrypt:ro \
   laptop-erp-web:latest
-echo "laptop-erp-web restarted."
+
+# Cleanup
+rm -rf "$WORKDIR"
 
 echo ""
 echo "Done! CRM: https://crm.rentfoxxy.com"
