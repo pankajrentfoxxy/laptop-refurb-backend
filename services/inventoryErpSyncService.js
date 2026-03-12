@@ -200,12 +200,12 @@ const upsertInventoryFromErpRecord = async ({ machineNumber, serialNumber, detai
         [machineNumber, serialNumber]
     );
 
-    const brand = pickFirst(details, ['brand', 'Brand']) || 'Unknown';
-    const model = pickFirst(details, ['model', 'Model']) || 'Unknown';
-    const processor = pickFirst(details, ['processor', 'Processor']);
-    const generation = pickFirst(details, ['generation', 'Generation', 'gen']);
-    const ram = pickFirst(details, ['ram', 'RAM']);
-    const storage = pickFirst(details, ['storage', 'Storage']);
+    const brand = pickFirst(details, ['brand', 'Brand', 'brand_name', 'manufacturer']) || 'Unknown';
+    const model = pickFirst(details, ['model', 'Model', 'model_name', 'product_name', 'preferred_model', 'name']) || 'Unknown';
+    const processor = pickFirst(details, ['processor', 'Processor', 'cpu', 'CPU']);
+    const generation = pickFirst(details, ['generation', 'Generation', 'gen', 'Gen']);
+    const ram = pickFirst(details, ['ram', 'RAM', 'memory']);
+    const storage = pickFirst(details, ['storage', 'Storage', 'ssd', 'hdd']);
     const gpu = pickFirst(details, ['gpu', 'GPU', 'graphics', 'graphic_card']);
     const screenSize = pickFirst(details, ['screen_size', 'screenSize', 'display_size']);
 
