@@ -835,8 +835,6 @@ exports.updateLeadBasicDetails = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const normalizedEmail = normalizeEmail(email);
-    const normalizedPhone = normalizePhone(phone);
     const normalizedCity = city !== undefined ? String(city || '').trim() : undefined;
     const nextCompanyName = (company_name ?? companyName ?? existing.companyName ?? null);
     const nextCompanyBrand = (company_brand ?? companyBrand) !== undefined
@@ -847,11 +845,12 @@ exports.updateLeadBasicDetails = async (req, res) => {
       : undefined;
 
     // Use raw SQL for full update to avoid Prisma client sync issues with company_brand
+    // Only update email/phone if explicitly provided - otherwise keep existing (fixes bug when only personal_remarks is sent)
     const nextName = (name ?? existing.name)?.trim() || existing.name;
-    const nextEmail = normalizedEmail !== undefined ? normalizedEmail : existing.email;
-    const nextPhone = normalizedPhone !== undefined ? normalizedPhone : existing.phone;
+    const nextEmail = email !== undefined ? (normalizeEmail(email) || null) : existing.email;
+    const nextPhone = phone !== undefined ? (normalizePhone(phone) || null) : existing.phone;
     const nextCity = normalizedCity !== undefined ? (normalizedCity || null) : existing.city;
-    const nextPersonalRemarksVal = nextPersonalRemarks !== undefined ? nextPersonalRemarks : existing.personalRemarks;
+    const nextPersonalRemarksVal = nextPersonalRemarks !== undefined ? nextPersonalRemarks : (existing.personalRemarks ?? existing.personal_remarks);
     const cbRes = await pool.query('SELECT company_brand FROM leads WHERE lead_id = $1', [leadId]);
     const existingCompanyBrandVal = cbRes.rows[0]?.company_brand ?? null;
     const nextCompanyBrandVal = nextCompanyBrand !== undefined ? nextCompanyBrand : existingCompanyBrandVal;
