@@ -42,13 +42,22 @@ const parsePagination = (payload) => {
     };
 };
 
-const getHttpConfig = () => ({
-    headers: {
-        Accept: 'application/json',
-        Authorization: ERP_TOKEN.startsWith('Bearer ') ? ERP_TOKEN : `Bearer ${ERP_TOKEN}`
-    },
-    timeout: 30000
-});
+// ERP_AUTH_HEADER: 'bearer' (default) | 'x-api-token' | 'query'
+const ERP_AUTH_HEADER = (process.env.ERP_AUTH_HEADER || 'bearer').toLowerCase();
+
+const getHttpConfig = () => {
+    const headers = { Accept: 'application/json' };
+    if (ERP_AUTH_HEADER === 'x-api-token') {
+        headers['X-API-TOKEN'] = ERP_TOKEN;
+    } else {
+        headers.Authorization = ERP_TOKEN.startsWith('Bearer ') ? ERP_TOKEN : `Bearer ${ERP_TOKEN}`;
+    }
+    const config = { headers, timeout: 30000 };
+    if (ERP_AUTH_HEADER === 'query') {
+        config.params = { api_token: ERP_TOKEN };
+    }
+    return config;
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
