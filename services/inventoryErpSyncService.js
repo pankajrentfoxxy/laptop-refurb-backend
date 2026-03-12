@@ -68,6 +68,11 @@ const requestWithRetry = async (url) => {
             return await axios.get(url, getHttpConfig());
         } catch (error) {
             const status = error.response?.status;
+            if (status === 401) {
+                const body = error.response?.data;
+                const msg = typeof body === 'object' ? JSON.stringify(body) : String(body || '');
+                throw new Error(`ERP 401 Unauthorized. URL: ${url}. Response: ${msg.slice(0, 200)}`);
+            }
             if (status !== 429 || attempt === ERP_MAX_RETRIES) throw error;
             const retryAfterSeconds = Number(error.response?.headers?.['retry-after'] || 0);
             const backoffMs = retryAfterSeconds > 0
