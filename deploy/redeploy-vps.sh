@@ -24,14 +24,16 @@ git clone --depth 1 "https://github.com/${REPO}.git" .
 mkdir -p "$LAPTOP_ERP"
 mkdir -p "$LAPTOP_ERP/deploy"
 
-# 3. Copy files needed for web build (HTTP-only nginx avoids SSL cert restart loop)
+# 3. Copy files needed for web build
 echo "Copying deploy files..."
-if [ -f deploy/nginx.deploy.http-only.conf ]; then
-  cp -f deploy/nginx.deploy.http-only.conf "$LAPTOP_ERP/deploy/"
-else
-  curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/nginx.deploy.http-only.conf" -o "$LAPTOP_ERP/deploy/nginx.deploy.http-only.conf" || \
-  cp -f deploy/nginx.deploy.conf "$LAPTOP_ERP/deploy/nginx.deploy.http-only.conf"
-fi
+mkdir -p "$LAPTOP_ERP/deploy"
+for f in nginx.deploy.http-only.conf nginx.deploy.conf docker-entrypoint-web.sh; do
+  if [ -f "deploy/$f" ]; then
+    cp -f "deploy/$f" "$LAPTOP_ERP/deploy/"
+  else
+    curl -sSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/deploy/$f" -o "$LAPTOP_ERP/deploy/$f" 2>/dev/null || true
+  fi
+done
 cp -f Dockerfile.web.deploy "$LAPTOP_ERP/"
 
 # 4. Copy docker-compose only if missing (preserve Hostinger's .env)
