@@ -166,16 +166,23 @@ const productIdsMatch = (product, qcRecord) => {
     return qcIds.some((q) => productIds.some((p) => String(q) === String(p)));
 };
 
-const productMatchesMachine = (product, machineNumber) => {
-    const mn = normalizeText(machineNumber);
-    if (!mn) return false;
-    return (
-        normalizeText(product.unique_product_serial) === mn ||
-        normalizeText(product.machine_number) === mn ||
-        normalizeText(product.machineNumber) === mn ||
-        normalizeText(product.serial_number) === mn ||
-        normalizeText(product.serialNumber) === mn
-    );
+const normalizeForMatch = (v) => {
+    const s = normalizeText(v);
+    if (!s) return '';
+    return s.replace(/[\s\-_]/g, '').toUpperCase();
+};
+
+const productMatchesMachine = (product, machineNumber, serialNumber) => {
+    const mn = normalizeForMatch(machineNumber);
+    const sn = normalizeForMatch(serialNumber);
+    if (!mn && !sn) return false;
+    const productIds = [
+        product.unique_product_serial, product.machine_number, product.machineNumber,
+        product.serial_number, product.serialNumber
+    ].map(normalizeForMatch).filter(Boolean);
+    if (mn && productIds.includes(mn)) return true;
+    if (sn && productIds.includes(sn)) return true;
+    return false;
 };
 
 const resolvePurchaseDetailsForQc = (qcRecord, purchaseRecord) => {
@@ -183,11 +190,15 @@ const resolvePurchaseDetailsForQc = (qcRecord, purchaseRecord) => {
 
     const products = Array.isArray(purchaseRecord.product_details) ? purchaseRecord.product_details : [];
     const machineNumber = pickFirst(qcRecord, ['unique_product_serial', 'machine_number', 'machineNumber']);
+    const serialNumber = pickFirst(qcRecord, ['serial_number', 'serialNo', 'serial']);
 
+    // 1. Match by product_id / product_details_id (most reliable)
     let matchedProduct = products.find((p) => productIdsMatch(p, qcRecord));
-    if (!matchedProduct && machineNumber) {
-        matchedProduct = products.find((p) => productMatchesMachine(p, machineNumber));
+    // 2. Match by machine_number or serial_number (normalized, ignores spaces/dashes)
+    if (!matchedProduct && (machineNumber || serialNumber)) {
+        matchedProduct = products.find((p) => productMatchesMachine(p, machineNumber, serialNumber));
     }
+    // 3. Only use products[0] when PO has exactly ONE product (single-laptop order)
     if (!matchedProduct && products.length === 1) {
         matchedProduct = products[0];
     }
@@ -197,6 +208,7 @@ const resolvePurchaseDetailsForQc = (qcRecord, purchaseRecord) => {
 
     const assets = parseAssetsDetails(purchaseRecord.assets_details);
 
+    // Merge: PO level < assets < matched product < QC record (QC overrides)
     return {
         ...purchaseRecord,
         ...assets,
