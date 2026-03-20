@@ -225,11 +225,13 @@ exports.submitQC = async (req, res) => {
         await client.query('BEGIN');
 
         const ticketMetaRes = await client.query(
-            `SELECT serial_number, machine_number FROM tickets WHERE ticket_id = $1`,
+            `SELECT serial_number, machine_number, assigned_user_id FROM tickets WHERE ticket_id = $1`,
             [id]
         );
-        const serialNumber = ticketMetaRes.rows[0]?.serial_number || null;
-        const machineNumber = ticketMetaRes.rows[0]?.machine_number || null;
+        const ticketMeta = ticketMetaRes.rows[0] || {};
+        const serialNumber = ticketMeta.serial_number || null;
+        const machineNumber = ticketMeta.machine_number || null;
+        const currentAssigneeId = ticketMeta.assigned_user_id || null;
 
         // Calculate QC result
         const { result, reasons } = calculateQCResult(checklist);
@@ -311,14 +313,32 @@ exports.submitQC = async (req, res) => {
         if (stageRes.rows.length > 0) {
             const { stage_id, team_id } = stageRes.rows[0];
             const isCompleted = nextStage === 'Inventory';
+            // Keep same assignee when QC1→QC2 (QC Team flow, like Hardware & Software)
+            const assignedUserId = (result === 'PASS' && qcStage === 'QC1') ? currentAssigneeId : null;
 
             await client.query(
                 `UPDATE tickets 
-                 SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = NULL,
+                 SET current_stage_id = $1, assigned_team_id = $2, assigned_user_id = $5,
                      status = $4::varchar, completed_at = CASE WHEN $4::varchar = 'completed' THEN CURRENT_TIMESTAMP ELSE NULL END
                  WHERE ticket_id = $3`,
-                [stage_id, team_id, id, isCompleted ? 'completed' : 'in_progress']
+                [stage_id, team_id, id, isCompleted ? 'completed' : 'in_progress', assignedUserId]
             );
+
+            // Stop work timer when QC passes (so we can calculate time per step)
+            if (result === 'PASS') {
+                const workEndNotes = `QC passed - ${qcStage}`;
+                const workEndRes = await client.query(
+                    `UPDATE work_logs SET end_time = CURRENT_TIMESTAMP, notes = $1 
+                     WHERE ticket_id = $2 AND user_id = $3 AND end_time IS NULL`,
+                    [workEndNotes, id, userId]
+                );
+                if (workEndRes.rowCount > 0) {
+                    await client.query(
+                        `INSERT INTO activities (ticket_id, user_id, action, notes) VALUES ($1, $2, 'work_ended', $3)`,
+                        [id, userId, `Ended work: ${workEndNotes}`]
+                    );
+                }
+            }
 
             if (isCompleted && (serialNumber || machineNumber)) {
                 await client.query(
