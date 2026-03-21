@@ -118,26 +118,43 @@ exports.replaceMachine = async (req, res) => {
         const newInvRes = await client.query(
             `SELECT inventory_id, machine_number, serial_number, brand, model, processor, ram, storage
              FROM inventory
-             WHERE (machine_number = $1 OR UPPER(REPLACE(REPLACE(REPLACE(COALESCE(machine_number,''), ' ', ''), '-', ''), '_', '')) = $3)
+             WHERE (machine_number = $1 OR UPPER(REPLACE(REPLACE(REPLACE(COALESCE(machine_number,''), ' ', ''), '-', ''), '_', '')) = $2)
                AND status IN ('Ready', 'In Stock')
                AND stock_type IN ('Ready', 'Cooling Period')
-               AND ($2::int IS NULL OR inventory_id != $2)
                FOR UPDATE SKIP LOCKED`,
-            [machineNum, item.inventory_id, normalized]
+            [machineNum, normalized]
         );
-        if (newInvRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: `Machine ${machineNum} not found or not available for assignment` });
+
+        let newInv = null;
+        if (newInvRes.rows.length > 0) {
+            if (item.inventory_id && newInvRes.rows.some(r => r.inventory_id === item.inventory_id)) {
+                newInv = newInvRes.rows.find(r => r.inventory_id === item.inventory_id);
+                await client.query('COMMIT');
+                return res.json({
+                    success: true,
+                    message: 'Machine is already assigned to this item.',
+                    order_id: item.order_id,
+                    new_machine_number: newInv.machine_number,
+                    new_serial_number: newInv.serial_number
+                });
+            }
+            newInv = newInvRes.rows[0];
         }
-        const newInv = newInvRes.rows[0];
+
+        if (!newInv) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: `Machine ${machineNum} not found or not available for assignment. Ensure it exists in inventory with status Ready/In Stock and stock_type Ready.` });
+        }
 
         const oldInvId = item.inventory_id;
         const newInvId = newInv.inventory_id;
 
-        await client.query(
-            `UPDATE inventory SET status = 'In Repair' WHERE inventory_id = $1`,
-            [oldInvId]
-        );
+        if (oldInvId && oldInvId !== newInvId) {
+            await client.query(
+                `UPDATE inventory SET status = 'In Repair' WHERE inventory_id = $1`,
+                [oldInvId]
+            );
+        }
         await client.query(
             `UPDATE inventory SET status = 'Reserved' WHERE inventory_id = $1`,
             [newInvId]
