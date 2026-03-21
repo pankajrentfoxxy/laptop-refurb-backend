@@ -96,6 +96,8 @@ exports.replaceMachine = async (req, res) => {
         return res.status(400).json({ message: 'new_machine_number is required' });
     }
     const machineNum = String(new_machine_number).trim();
+    // Normalize for flexible match (TTSPL6177 = TTSPL-6177 = TTSPL 6177)
+    const normalized = machineNum.replace(/[\s\-_]/g, '').toUpperCase();
 
     const client = await pool.connect();
     try {
@@ -116,12 +118,12 @@ exports.replaceMachine = async (req, res) => {
         const newInvRes = await client.query(
             `SELECT inventory_id, machine_number, serial_number, brand, model, processor, ram, storage
              FROM inventory
-             WHERE machine_number = $1
+             WHERE (machine_number = $1 OR UPPER(REPLACE(REPLACE(REPLACE(COALESCE(machine_number,''), ' ', ''), '-', ''), '_', '')) = $3)
                AND status IN ('Ready', 'In Stock')
-               AND stock_type IN ('Cooling Period', 'Ready')
-               AND inventory_id != $2
+               AND stock_type IN ('Ready', 'Cooling Period')
+               AND ($2::int IS NULL OR inventory_id != $2)
                FOR UPDATE SKIP LOCKED`,
-            [machineNum, item.inventory_id]
+            [machineNum, item.inventory_id, normalized]
         );
         if (newInvRes.rows.length === 0) {
             await client.query('ROLLBACK');
