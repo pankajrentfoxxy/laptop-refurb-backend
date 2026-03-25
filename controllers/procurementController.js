@@ -12,17 +12,63 @@ const logOrderStatusHistory = async (db, { orderId, fromStatus = null, toStatus,
 exports.getRequests = async (req, res) => {
     try {
         const includeReceived = req.query.include_received === 'true';
-        const result = await pool.query(`
-            SELECT pr.*, oi.order_id, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name, c.company_name
+        const limitRaw = req.query.limit;
+        const offsetRaw = req.query.offset;
+
+        const baseWhere = `
+            WHERE ($1::boolean = true OR pr.status != 'Received')
+              AND o.status != 'Cancelled'
+        `;
+
+        const summaryResult = await pool.query(
+            `
+            SELECT
+                COUNT(*) FILTER (WHERE pr.status = 'New')::int AS new_count,
+                COUNT(*) FILTER (WHERE pr.status = 'Ordered')::int AS ordered_count,
+                COUNT(*)::int AS total_count
             FROM procurement_requests pr
             JOIN order_items oi ON pr.order_item_id = oi.item_id
             JOIN orders o ON oi.order_id = o.order_id
             JOIN customers c ON o.customer_id = c.customer_id
-            WHERE ($1::boolean = true OR pr.status != 'Received')
-              AND o.status != 'Cancelled'
+            ${baseWhere}
+        `,
+            [includeReceived]
+        );
+        const summary = summaryResult.rows[0];
+
+        let limit = null;
+        let offset = 0;
+        if (limitRaw !== undefined && String(limitRaw) !== '') {
+            limit = Math.min(Math.max(parseInt(String(limitRaw), 10) || 50, 1), 200);
+            offset = Math.max(parseInt(String(offsetRaw || '0'), 10) || 0, 0);
+        }
+
+        let listSql = `
+            SELECT pr.*, oi.order_id, o.created_at AS order_date, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model, o.customer_id, c.name as customer_name, c.company_name
+            FROM procurement_requests pr
+            JOIN order_items oi ON pr.order_item_id = oi.item_id
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN customers c ON o.customer_id = c.customer_id
+            ${baseWhere}
             ORDER BY pr.created_at ASC
-        `, [includeReceived]);
-        res.json({ requests: result.rows });
+        `;
+        const params = [includeReceived];
+        if (limit !== null) {
+            listSql += ` LIMIT $2 OFFSET $3`;
+            params.push(limit, offset);
+        }
+
+        const result = await pool.query(listSql, params);
+
+        res.json({
+            requests: result.rows,
+            total: parseInt(summary.total_count, 10) || 0,
+            summary: {
+                new: summary.new_count,
+                ordered: summary.ordered_count,
+                total: parseInt(summary.total_count, 10) || 0
+            }
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Failed to fetch requests' });

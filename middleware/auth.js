@@ -44,6 +44,18 @@ const checkRole = (...roles) => {
   };
 };
 
+// Allow if user has any of the roles OR any of the permissions
+const checkRoleOrPermission = (roles = [], permissions = []) => {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    const hasRole = roles.length === 0 || roles.includes(req.user.role);
+    const userPerms = req.user.permissions || [];
+    const hasPermission = permissions.length === 0 || permissions.some(p => userPerms.includes(p));
+    if (hasRole || hasPermission) return next();
+    return res.status(403).json({ success: false, message: 'Access forbidden' });
+  };
+};
+
 // Check Granular Permission or Role
 const checkPermission = (permission) => {
   return (req, res, next) => {
@@ -68,4 +80,4 @@ const checkPermission = (permission) => {
   };
 };
 
-module.exports = { authMiddleware, checkRole, checkPermission };
+module.exports = { authMiddleware, checkRole, checkPermission, checkRoleOrPermission };

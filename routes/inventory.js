@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authMiddleware, checkRole } = require('../middleware/auth');
+const { authMiddleware, checkRole, checkRoleOrPermission } = require('../middleware/auth');
 const {
     addInventory,
     updateInventory,
@@ -33,11 +33,11 @@ router.get('/specs', getSpecs);
 router.get('/available', searchAvailableInventory);
 router.get('/catalog/options', getLaptopCatalogOptions);
 
-// Search single item by machine/serial (All authenticated for scanning)
-router.get('/search', searchByMachineOrSerial);
+// Search single item by machine/serial (inventory_read or inventory_write)
+router.get('/search', checkRoleOrPermission(['admin', 'team_member', 'manager', 'floor_manager'], ['inventory_read', 'inventory_write', 'inventory_access']), searchByMachineOrSerial);
 
-// Add inventory (Warehouse & Admin only)
-router.post('/', checkRole('admin', 'manager', 'team_member'), addInventory);
+// Add inventory (roles or inventory_write permission)
+router.post('/', checkRoleOrPermission(['admin', 'manager', 'team_member'], ['inventory_write', 'inventory_access']), addInventory);
 
 // Update inventory by machine_number or inventory_id
 router.put('/:identifier', checkRole('admin', 'manager', 'team_member'), updateInventory);
@@ -45,9 +45,9 @@ router.put('/:identifier', checkRole('admin', 'manager', 'team_member'), updateI
 // Trigger full ERP sync (corrects all records from QC Passed + Purchase Order)
 router.post('/sync', checkRole('admin', 'manager'), triggerErpSync);
 
-// Bulk Upload
-router.post('/upload', checkRole('admin', 'manager', 'floor_manager'), upload.single('file'), uploadBulk);
-router.post('/catalog/upload', checkRole('admin', 'manager', 'floor_manager'), upload.single('file'), uploadLaptopCatalogCsv);
+// Bulk Upload (roles or inventory_write permission)
+router.post('/upload', checkRoleOrPermission(['admin', 'manager', 'floor_manager'], ['inventory_write', 'inventory_access']), upload.single('file'), uploadBulk);
+router.post('/catalog/upload', checkRoleOrPermission(['admin', 'manager', 'floor_manager'], ['inventory_write', 'inventory_access']), upload.single('file'), uploadLaptopCatalogCsv);
 // Note: team_member should technically be filtered by 'Warehouse Team' in logic or here, but keeping broad for now based on 'Access by Warehouse and admin' request. 
 // Ideally we check if team_name is Warehouse. For now, role check is basic.
 

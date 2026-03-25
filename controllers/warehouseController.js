@@ -11,9 +11,32 @@ const logOrderStatusHistory = async (client, { orderId, fromStatus, toStatus, ch
 // Get warehouse items (order_items with status Warehouse - Cooling Period laptops)
 exports.getWarehouseItems = async (req, res) => {
     try {
-        const result = await pool.query(`
+        const limitRaw = req.query.limit;
+        const offsetRaw = req.query.offset;
+        const baseWhere = `WHERE oi.status = 'Warehouse' AND o.status != 'Cancelled'`;
+
+        const countRes = await pool.query(
+            `
+            SELECT COUNT(*)::int AS total
+            FROM order_items oi
+            LEFT JOIN inventory i ON oi.inventory_id = i.inventory_id
+            JOIN orders o ON oi.order_id = o.order_id
+            JOIN customers c ON o.customer_id = c.customer_id
+            ${baseWhere}
+        `
+        );
+        const total = countRes.rows[0]?.total ?? 0;
+
+        let limit = null;
+        let offset = 0;
+        if (limitRaw !== undefined && String(limitRaw) !== '') {
+            limit = Math.min(Math.max(parseInt(String(limitRaw), 10) || 50, 1), 200);
+            offset = Math.max(parseInt(String(offsetRaw || '0'), 10) || 0, 0);
+        }
+
+        let sql = `
             SELECT 
-                oi.item_id, oi.order_id, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model,
+                oi.item_id, oi.order_id, o.created_at AS order_date, oi.brand, oi.processor, oi.generation, oi.ram, oi.storage, oi.preferred_model,
                 oi.status as item_status, oi.inventory_id,
                 i.machine_number, i.serial_number, i.stock_type,
                 o.status as order_status, o.customer_id,
@@ -22,11 +45,17 @@ exports.getWarehouseItems = async (req, res) => {
             LEFT JOIN inventory i ON oi.inventory_id = i.inventory_id
             JOIN orders o ON oi.order_id = o.order_id
             JOIN customers c ON o.customer_id = c.customer_id
-            WHERE oi.status = 'Warehouse'
-              AND o.status != 'Cancelled'
+            ${baseWhere}
             ORDER BY oi.item_id ASC
-        `);
-        res.json({ items: result.rows || [] });
+        `;
+        const params = [];
+        if (limit !== null) {
+            sql += ` LIMIT $1 OFFSET $2`;
+            params.push(limit, offset);
+        }
+
+        const result = await pool.query(sql, params);
+        res.json({ items: result.rows || [], total });
     } catch (err) {
         console.error('Warehouse getItems error:', err);
         res.status(500).json({ message: 'Failed to fetch warehouse items' });

@@ -363,34 +363,47 @@ exports.addInventory = async (req, res) => {
     }
 };
 
-// Get Inventory
+// Get Inventory (paginated, 50 per page default)
 exports.getInventory = async (req, res) => {
-    const { search, stock_type } = req.query;
+    const { search, stock_type, limit = 50, offset = 0 } = req.query;
+    const pageLimit = Math.min(parseInt(limit, 10) || 50, 100);
+    const pageOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
     try {
-        let query = 'SELECT * FROM inventory WHERE 1=1';
+        let whereClause = 'WHERE 1=1';
         const params = [];
         let paramCount = 1;
 
         if (search) {
-            query += ` AND (machine_number ILIKE $${paramCount} OR serial_number ILIKE $${paramCount} OR brand ILIKE $${paramCount} OR model ILIKE $${paramCount})`;
+            whereClause += ` AND (machine_number ILIKE $${paramCount} OR serial_number ILIKE $${paramCount} OR brand ILIKE $${paramCount} OR model ILIKE $${paramCount} OR processor ILIKE $${paramCount})`;
             params.push(`%${search}%`);
             paramCount++;
         }
 
         if (stock_type) {
-            query += ` AND stock_type = $${paramCount}`;
+            whereClause += ` AND stock_type = $${paramCount}`;
             params.push(stock_type);
             paramCount++;
         }
 
-        query += ' ORDER BY created_at DESC';
+        const countResult = await pool.query(
+            `SELECT COUNT(*)::int as total FROM inventory ${whereClause}`,
+            params
+        );
+        const total = countResult.rows[0]?.total || 0;
 
-        const result = await pool.query(query, params);
+        params.push(pageLimit, pageOffset);
+        const result = await pool.query(
+            `SELECT * FROM inventory ${whereClause} ORDER BY created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+            params
+        );
 
         res.json({
             success: true,
             count: result.rows.length,
+            total,
+            limit: pageLimit,
+            offset: pageOffset,
             items: result.rows
         });
     } catch (error) {
@@ -399,9 +412,9 @@ exports.getInventory = async (req, res) => {
     }
 };
 
-// Search/Scan Inventory
+// Search/Scan Inventory (paginated, searches ALL items, 50 per page)
 exports.searchByMachineOrSerial = async (req, res) => {
-    const { term } = req.query;
+    const { term, limit = 50, offset = 0 } = req.query;
 
     if (!term) {
         return res.status(400).json({ success: false, message: 'Search term required' });
@@ -409,22 +422,29 @@ exports.searchByMachineOrSerial = async (req, res) => {
 
     try {
         const likeTerm = `%${term}%`;
-        const result = await pool.query(
-            `SELECT * FROM inventory 
-             WHERE machine_number ILIKE $1
-                OR serial_number ILIKE $1
-                OR brand ILIKE $1
-                OR model ILIKE $1
-                OR processor ILIKE $1`,
+        const pageLimit = Math.min(parseInt(limit, 10) || 50, 100);
+        const pageOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
+        const countResult = await pool.query(
+            `SELECT COUNT(*)::int as total FROM inventory 
+             WHERE machine_number ILIKE $1 OR serial_number ILIKE $1 OR brand ILIKE $1 OR model ILIKE $1 OR processor ILIKE $1`,
             [likeTerm]
         );
+        const total = countResult.rows[0]?.total || 0;
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Item not found in inventory' });
-        }
+        const result = await pool.query(
+            `SELECT * FROM inventory 
+             WHERE machine_number ILIKE $1 OR serial_number ILIKE $1 OR brand ILIKE $1 OR model ILIKE $1 OR processor ILIKE $1
+             ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+            [likeTerm, pageLimit, pageOffset]
+        );
 
         res.json({
             success: true,
+            count: result.rows.length,
+            total,
+            limit: pageLimit,
+            offset: pageOffset,
             items: result.rows
         });
     } catch (error) {

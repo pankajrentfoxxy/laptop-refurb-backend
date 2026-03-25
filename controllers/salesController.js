@@ -1177,12 +1177,25 @@ exports.getOrders = async (req, res) => {
             paramCount++;
         }
 
-        // Status filter
-        if (status) {
+        // Status filter: comma-separated `statuses` takes precedence over single `status`
+        let statusFilterApplied = false;
+        if (req.query.statuses !== undefined && String(req.query.statuses).trim() !== '') {
+            const list = String(req.query.statuses)
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+            if (list.length > 0) {
+                conditions.push(`o.status = ANY($${paramCount}::text[])`);
+                params.push(list);
+                paramCount++;
+                statusFilterApplied = true;
+            }
+        }
+        if (!statusFilterApplied && status) {
             conditions.push(`o.status = $${paramCount}`);
             params.push(status);
             paramCount++;
-        } else {
+        } else if (!statusFilterApplied) {
             conditions.push(`o.status != 'Cancelled'`);
         }
 
@@ -1203,13 +1216,40 @@ exports.getOrders = async (req, res) => {
             paramCount++;
         }
 
-        if (conditions.length > 0) {
-            query += ' WHERE ' + conditions.join(' AND ');
-        }
+        const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
+        const countSql = `
+            SELECT COUNT(*)::int AS total
+            FROM orders o
+            JOIN customers c ON o.customer_id = c.customer_id
+            LEFT JOIN users u ON o.owner_user_id = u.user_id
+            ${whereClause}
+        `;
+
+        query += whereClause;
         query += ` GROUP BY o.order_id, o.customer_type, c.name, c.email, c.company_name, c.gst_no, u.name ORDER BY o.created_at DESC`;
 
-        const result = await pool.query(query, params);
+        const limitRaw = req.query.limit;
+        let limit = null;
+        let offset = 0;
+        if (limitRaw !== undefined && String(limitRaw) !== '') {
+            limit = Math.min(Math.max(parseInt(String(limitRaw), 10) || 50, 1), 200);
+            offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0);
+        }
+
+        const queryParams = [...params];
+        if (limit !== null) {
+            query += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+            queryParams.push(limit, offset);
+            const [countResult, result] = await Promise.all([
+                pool.query(countSql, params),
+                pool.query(query, queryParams)
+            ]);
+            const total = countResult.rows[0]?.total ?? 0;
+            return res.json({ orders: result.rows, total });
+        }
+
+        const result = await pool.query(query, queryParams);
         res.json({ orders: result.rows });
     } catch (error) {
         console.error(error);
